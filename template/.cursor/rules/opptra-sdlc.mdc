@@ -1,0 +1,16 @@
+---
+description: How this Opptra app is branched, reviewed, and deployed
+alwaysApply: true
+---
+
+Deploy only through the GitHub workflows that call opptra/sdlc.
+
+A feature branch comes off staging. A pull request into staging deploys the shared staging project. A pull request from staging into main deploys prod_project from service.yaml.
+
+Do not add a deploy script that targets production. Do not commit secrets or bake them into an image. The image tag is the git SHA.
+
+Keep a pull request to one change. Split product code away from edits to .github/workflows or service.yaml.
+
+New UI code is Vite, React, and TypeScript. New API code is FastAPI. Auth is the auth field in service.yaml.
+
+Rollback is a revert merged to staging and then to main.

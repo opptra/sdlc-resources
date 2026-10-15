@@ -1,0 +1,5 @@
+# Replace @opptra/platform with a real team or with usernames before
+# branch protection requires code owner review.
+
+.github/workflows/ @opptra/platform
+service.yaml @opptra/platform

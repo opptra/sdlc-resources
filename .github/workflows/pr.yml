@@ -1,0 +1,25 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main, staging]
+
+permissions:
+  contents: read
+
+jobs:
+  manifest:
+    name: manifest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Check the template manifest
+        run: python3 scripts/check_manifest.py template/service.yaml
+
+  ci:
+    name: ci
+    uses: ./.github/workflows/ci.yml
+    with:
+      working_directory: template

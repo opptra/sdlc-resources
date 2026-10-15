@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/opptra/sdlc/blob/main/service.schema.json",
+  "title": "Opptra service manifest",
+  "description": "Every app repository has a service.yaml at its root. The reusable workflows read it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "archetype", "prod_project", "region", "auth"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{1,48}$",
+      "description": "Cloud Run service name. Lowercase, starts with a letter."
+    },
+    "archetype": {
+      "type": "string",
+      "enum": ["cloud-run-service", "cloud-run-job", "vm-worker", "apps-script", "config-only"]
+    },
+    "prod_project": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Existing production GCP project for this app. Staging always uses opptra-staging."
+    },
+    "region": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Cloud Run region. Default for new apps is asia-south1."
+    },
+    "auth": {
+      "type": "string",
+      "enum": ["app-login", "iap", "public"],
+      "description": "How a person reaches the app. app-login means the app has its own login and Cloud Run is publicly invokable. iap puts Identity-Aware Proxy in front. public is an anonymous site."
+    }
+  }
+}

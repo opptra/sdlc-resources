@@ -1,0 +1,13 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [staging, main]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: opptra/sdlc/.github/workflows/ci.yml@v1

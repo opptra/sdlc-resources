@@ -1,0 +1,11 @@
+---
+description: Python conventions for Opptra services
+globs: backend/**/*.py
+alwaysApply: false
+---
+
+Use Python 3.12, uv, Ruff, and pytest.
+
+Keep HTTP routes under /api. Log JSON to stdout through the app logger. Fields are severity, message, service, and environment.
+
+Put tests in backend/tests. A behavior change lands with a test in the same pull request once the repo has a test suite.

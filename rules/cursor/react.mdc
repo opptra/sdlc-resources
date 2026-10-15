@@ -1,0 +1,11 @@
+---
+description: Frontend conventions for Opptra services
+globs: frontend/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+Use Vite, React, and TypeScript. Call the API with relative /api paths so the browser and FastAPI stay on one origin.
+
+Product analytics goes through frontend/src/analytics.ts. That function stays a no-op until a tool is chosen.
+
+Do not add Next.js or a second Node server.

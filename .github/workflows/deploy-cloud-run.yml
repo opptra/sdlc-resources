@@ -1,0 +1,169 @@
+name: deploy-cloud-run
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: staging or prod
+        required: true
+        type: string
+      wif_provider:
+        description: Workload Identity provider resource name
+        required: true
+        type: string
+      wif_service_account:
+        description: Deployer service account email
+        required: true
+        type: string
+      staging_project:
+        description: Shared staging project id
+        type: string
+        default: opptra-staging
+      working_directory:
+        description: Directory that contains service.yaml and the Dockerfile
+        type: string
+        default: "."
+      artifact_repo:
+        description: Artifact Registry repository id
+        type: string
+        default: apps
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+jobs:
+  deploy:
+    name: deploy
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment == 'prod' && 'production' || 'staging' }}
+    concurrency:
+      group: deploy-${{ github.repository }}-${{ inputs.environment }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read service.yaml
+        id: manifest
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          STAGING_PROJECT: ${{ inputs.staging_project }}
+          WIF_PROVIDER: ${{ inputs.wif_provider }}
+          WIF_SERVICE_ACCOUNT: ${{ inputs.wif_service_account }}
+        run: |
+          python3 << 'PY'
+          import os
+          import pathlib
+
+          environment = os.environ["ENVIRONMENT"]
+          if environment not in {"staging", "prod"}:
+              raise SystemExit("environment must be staging or prod")
+          if not os.environ["WIF_PROVIDER"] or not os.environ["WIF_SERVICE_ACCOUNT"]:
+              raise SystemExit(
+                  "Set WIF_PROVIDER_* and WIF_SERVICE_ACCOUNT_* Actions variables. "
+                  "scripts/bind-repo.sh prints them."
+              )
+
+          data = {}
+          for raw in pathlib.Path("service.yaml").read_text().splitlines():
+              line = raw.split("#", 1)[0].strip()
+              if not line or ":" not in line:
+                  continue
+              key, value = line.split(":", 1)
+              data[key.strip()] = value.strip().strip("\"'")
+
+          required = ["name", "archetype", "prod_project", "region", "auth"]
+          missing = [key for key in required if not data.get(key)]
+          if missing:
+              raise SystemExit(f"service.yaml missing: {', '.join(missing)}")
+          if data["archetype"] != "cloud-run-service":
+              raise SystemExit(
+                  "deploy-cloud-run.yml deploys archetype cloud-run-service, "
+                  f"got {data['archetype']}"
+              )
+          if data["auth"] not in {"app-login", "iap", "public"}:
+              raise SystemExit(f"unsupported auth {data['auth']}")
+
+          project = os.environ["STAGING_PROJECT"] if environment == "staging" else data["prod_project"]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as handle:
+              for key, value in {
+                  "name": data["name"],
+                  "project": project,
+                  "region": data["region"],
+                  "auth": data["auth"],
+              }.items():
+                  print(f"{key}={value}", file=handle)
+          PY
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ inputs.wif_provider }}
+          service_account: ${{ inputs.wif_service_account }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build and deploy
+        id: deploy
+        env:
+          NAME: ${{ steps.manifest.outputs.name }}
+          PROJECT: ${{ steps.manifest.outputs.project }}
+          REGION: ${{ steps.manifest.outputs.region }}
+          AUTH: ${{ steps.manifest.outputs.auth }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          ARTIFACT_REPO: ${{ inputs.artifact_repo }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${ARTIFACT_REPO}/${NAME}:${SHA}"
+          RUNTIME="${NAME}-runtime@${PROJECT}.iam.gserviceaccount.com"
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          ARGS=(
+            run deploy "$NAME"
+            --project "$PROJECT"
+            --region "$REGION"
+            --image "$IMAGE"
+            --port 8080
+            --service-account "$RUNTIME"
+            --memory 512Mi
+            --cpu 1
+            --min-instances 0
+            --set-env-vars "APP_ENV=${ENVIRONMENT},SERVICE_NAME=${NAME}"
+            --quiet
+          )
+          if [ "$AUTH" = "iap" ]; then
+            ARGS+=(--no-allow-unauthenticated --iap)
+          else
+            ARGS+=(--allow-unauthenticated)
+          fi
+          gcloud "${ARGS[@]}"
+          URL="$(gcloud run services describe "$NAME" --project "$PROJECT" --region "$REGION" --format='value(status.url)')"
+          if [ "$AUTH" = "iap" ]; then
+            echo "IAP is on. Skipped the public health request."
+          else
+            curl --fail --silent --show-error "${URL}/api/health"
+          fi
+          echo "url=${URL}" >> "$GITHUB_OUTPUT"
+
+      - name: Comment the staging URL
+        if: inputs.environment == 'staging'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          URL: ${{ steps.deploy.outputs.url }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          PR="$(gh pr list --repo "$GITHUB_REPOSITORY" --search "$SHA" --state all --json number --jq '.[0].number')"
+          if [ -z "$PR" ]; then
+            echo "No pull request found for $SHA"
+            exit 0
+          fi
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "Staging is up: ${URL}"
