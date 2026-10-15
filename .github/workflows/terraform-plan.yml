@@ -1,0 +1,122 @@
+name: terraform-plan
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: staging or prod. A pull request into main plans prod. Any other pull request plans staging.
+        required: true
+        type: string
+      wif_provider:
+        description: Workload Identity provider resource name
+        required: true
+        type: string
+      wif_service_account:
+        description: Deployer service account email
+        required: true
+        type: string
+      pr_number:
+        description: Pull request to comment on
+        required: true
+        type: string
+      staging_project:
+        description: Shared staging project id
+        type: string
+        default: opptra-staging
+      working_directory:
+        description: App root. Contains service.yaml, the Dockerfile, and infra/
+        type: string
+        default: "."
+      artifact_repo:
+        description: Artifact Registry repository id
+        type: string
+        default: apps
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Write Terraform variables
+        id: manifest
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          STAGING_PROJECT: ${{ inputs.staging_project }}
+          ARTIFACT_REPO: ${{ inputs.artifact_repo }}
+          SHA: ${{ github.sha }}
+          WIF_PROVIDER: ${{ inputs.wif_provider }}
+          WIF_SERVICE_ACCOUNT: ${{ inputs.wif_service_account }}
+        run: |
+          if [ "$ENVIRONMENT" != "staging" ] && [ "$ENVIRONMENT" != "prod" ]; then
+            echo "environment must be staging or prod" >&2
+            exit 1
+          fi
+          if [ -z "$WIF_PROVIDER" ] || [ -z "$WIF_SERVICE_ACCOUNT" ]; then
+            echo "Set the WIF_PROVIDER_* and WIF_SERVICE_ACCOUNT_* Actions variables. scripts/bind-repo.sh prints them." >&2
+            exit 1
+          fi
+          python3 scripts/render_tfvars.py \
+            --manifest service.yaml \
+            --environment "$ENVIRONMENT" \
+            --staging-project "$STAGING_PROJECT" \
+            --sha "$SHA" \
+            --artifact-repo "$ARTIFACT_REPO" \
+            --out infra/ci.auto.tfvars.json \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ inputs.wif_provider }}
+          service_account: ${{ inputs.wif_service_account }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.5"
+          terraform_wrapper: false
+
+      - name: Plan
+        env:
+          PROJECT: ${{ steps.manifest.outputs.project_id }}
+          NAME: ${{ steps.manifest.outputs.name }}
+        working-directory: ${{ inputs.working_directory }}/infra
+        run: |
+          set -euo pipefail
+          terraform init -input=false \
+            -backend-config="bucket=${PROJECT}-tfstate" \
+            -backend-config="prefix=${NAME}"
+          terraform plan -input=false -no-color -lock-timeout=120s \
+            -var-file=ci.auto.tfvars.json -out=tfplan | tee plan.txt
+
+      - name: Comment the plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr_number }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          PROJECT: ${{ steps.manifest.outputs.project_id }}
+        run: |
+          if [ -z "$PR" ]; then
+            echo "No pull request number."
+            exit 0
+          fi
+          {
+            echo "Terraform plan for ${ENVIRONMENT} (${PROJECT}). This does not change the project."
+            echo
+            echo '```'
+            head -c 50000 infra/plan.txt
+            echo
+            echo '```'
+          } > /tmp/plan-comment.md
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file /tmp/plan-comment.md

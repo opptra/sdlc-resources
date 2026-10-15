@@ -4,7 +4,7 @@ The language can stay. The contract is the branches, the required lint check, th
 
 ## 1. Add the manifest and the callers
 
-Add `service.yaml` at the repo root. Copy the caller workflows from [template/.github/workflows/](../template/.github/workflows/) and the pull request template. Copy `AGENTS.md` and `.cursor/rules/` from [rules/](../rules/) and edit the app name, archetype, and prod project.
+Add `service.yaml` at the repo root. Copy `infra/` and `scripts/render_tfvars.py` from the template. In `infra/main.tf`, set the module source to `git::https://github.com/opptra/sdlc.git//modules/cloud-run-service?ref=v1`. Copy the caller workflows from [template/.github/workflows/](../template/.github/workflows/) and the pull request template. Copy `AGENTS.md` and `.cursor/rules/` from [rules/](../rules/) and edit the app name, archetype, and prod project.
 
 Point `prod_project` at the project that already runs production. Do not move production projects as part of this step.
 
@@ -20,7 +20,7 @@ Deploy is still the old path at the end of this step.
 
 ## 3. Staging
 
-Run [scripts/bind-repo.sh](../scripts/bind-repo.sh) once `opptra-staging` exists. Merge to `staging` and confirm `/api/health` on the URL the workflow comments.
+Run [scripts/bind-repo.sh](../scripts/bind-repo.sh) once `opptra-staging` exists. If the Cloud Run service already exists, import it into the staging state before the first apply. The commands are in [resources.md](resources.md). Then merge to `staging` and confirm `/api/health` on the URL the workflow comments. The plan on that pull request should be an update, not a second service.
 
 ## 4. Production
 

@@ -2,7 +2,7 @@
 
 Replace this paragraph with what the app does. The rest is the Opptra standard. The source copy lives in `opptra/sdlc` under `rules/`.
 
-This app deploys only through the GitHub workflows that call `opptra/sdlc`. Read `service.yaml` for the service name, archetype, production project, region, and auth.
+This app deploys only through the GitHub workflows that call `opptra/sdlc`. Terraform in `infra/` is what changes GCP. Read `service.yaml` for the service name, archetype, production project, region, and auth.
 
 ## Branches
 

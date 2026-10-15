@@ -24,7 +24,7 @@ for branch in staging main; do
 {
   "required_status_checks": {
     "strict": true,
-    "contexts": ["${CHECK_NAME}"]
+    "contexts": ["${CHECK_NAME}", "plan / plan"]
   },
   "enforce_admins": true,
   "required_pull_request_reviews": {
@@ -36,5 +36,5 @@ for branch in staging main; do
   "allow_deletions": false
 }
 JSON
-  echo "protected ${REPO}@${branch} (required check: ${CHECK_NAME})"
+  echo "protected ${REPO}@${branch} (required checks: ${CHECK_NAME}, plan / plan)"
 done

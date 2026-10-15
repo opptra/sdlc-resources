@@ -11,7 +11,13 @@ rm -rf frontend/node_modules frontend/dist .venv
 git init
 ```
 
-Edit `service.yaml`, `README.md`, `AGENTS.md`, and `CODEOWNERS`. Replace `@opptra/platform` with the team or people who must approve workflow and `service.yaml` changes.
+Edit `service.yaml`, `README.md`, `AGENTS.md`, and `CODEOWNERS`. Replace `@opptra/platform` with the team or people who must approve workflow, `infra/`, and `service.yaml` changes.
+
+In `infra/main.tf`, point the module at this repository:
+
+```hcl
+source = "git::https://github.com/opptra/sdlc.git//modules/cloud-run-service?ref=v1"
+```
 
 `service.yaml`:
 
@@ -84,7 +90,7 @@ After [gcp-bootstrap.md](gcp-bootstrap.md) has been run:
 scripts/bind-repo.sh opptra/my-app opptra-applications
 ```
 
-The script prints the Actions variables. Set them on the app repository. The next merge to `staging` deploys `opptra-staging`. The next merge from `staging` to `main` deploys `prod_project`.
+The script creates the CI service account in both projects and prints the Actions variables. Set them on the app repository. It does not create the Cloud Run service. The first merge to `staging` applies Terraform in `opptra-staging`, which creates it. A later merge from `staging` to `main` applies the same config in `prod_project`.
 
 ## 6. Secrets
 

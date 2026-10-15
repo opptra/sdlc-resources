@@ -32,16 +32,18 @@ Branch off `staging`. Run the API and the UI locally as [the template README](..
 
 Cursor reads `AGENTS.md` and `.cursor/rules`, copied from [rules/](../rules/). The rules tell the agent:
 
-- Deploy only through the reusable workflow.
+- Deploy only through the reusable workflow. Terraform is what changes GCP.
 - Do not add a script that deploys to production from a laptop.
 - Do not commit a secret or bake one into an image.
 - Tag images with the git SHA.
-- Keep a pull request to one change. Split product code away from workflow or `service.yaml` changes.
+- Keep a pull request to one change. Split product code away from `infra/`, workflow, or `service.yaml` changes.
 - New UI code is Vite and React. New API code is FastAPI.
 
 ## 5. Pull request and CI
 
 Open a pull request into `staging`. The app's CI workflow calls [ci.yml](../.github/workflows/ci.yml). The check runs Ruff, the frontend typecheck, and ESLint. It runs pytest when `backend/tests` contains `test_*.py` files. An old repo with no tests gets lint only, until the first test file arrives.
+
+The same pull request runs [terraform-plan.yml](../.github/workflows/terraform-plan.yml). The job comments the plan. A person reads that comment before approving. The plan does not build an image and does not change the project. [resources.md](resources.md) is the full sequence.
 
 Direct pushes to `staging` and `main` are rejected after [scripts/protect-branches.sh](../scripts/protect-branches.sh).
 
@@ -51,15 +53,15 @@ Dobby posts the brief in [dobby/review-brief.md](../dobby/review-brief.md) befor
 
 ## 7. Staging
 
-Merge to `staging`. [deploy-cloud-run.yml](../.github/workflows/deploy-cloud-run.yml) builds the image tagged with the commit SHA, pushes it to Artifact Registry in `opptra-staging`, and deploys Cloud Run there. The job requests `/api/health` and fails if that is not 200. It comments the staging URL on the pull request.
+Merge to `staging`. [deploy-cloud-run.yml](../.github/workflows/deploy-cloud-run.yml) builds the image tagged with that commit, pushes it to Artifact Registry in `opptra-staging`, and runs `terraform apply` against that project's state. Apply creates or updates the Cloud Run service and deletes a resource only when `infra/` no longer contains it. The job requests `/api/health` and fails if that is not 200. It comments the staging URL on the pull request.
 
-The person who opens the promotion pull request opens that URL.
+The person who opens the promotion pull request opens that URL and reads the production plan.
 
 ## 8. Production
 
-Open a pull request from `staging` into `main`. Merge deploys the same workflow to `prod_project` from `service.yaml`. Traffic moves to the new revision. There is no second click in a GitHub Environment. The human approval already happened on the pull request.
+Open a pull request from `staging` into `main`. That pull request plans `prod_project`. Merge runs the same build and apply against the prod project's state. There is no second click in a GitHub Environment. The human approval already happened on the pull request.
 
-Laptop `gcloud` and `deploy.sh` are not the deploy path.
+Laptop `gcloud` and `deploy.sh` are not the deploy path. `gcloud run deploy` is not how a service is created.
 
 ## 9. Rollback
 

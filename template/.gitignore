@@ -6,3 +6,10 @@ node_modules/
 frontend/dist/
 backend/app/static/
 .DS_Store
+.terraform/
+*.tfstate
+*.tfstate.*
+ci.auto.tfvars.json
+plan.txt
+tfplan
+tfplan.*

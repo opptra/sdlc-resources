@@ -30,9 +30,9 @@ The required check is the reusable CI workflow. Ruff and the frontend lint alway
 
 ## Deploy mechanism
 
-GitHub Actions reusable workflows in this repository. Workload Identity Federation. No service-account key in GitHub. Image tag is the git SHA. Artifact Registry repository name is `apps`.
+GitHub Actions reusable workflows in this repository. Workload Identity Federation. No service-account key in GitHub. The image is built on the GitHub runner and tagged with the git SHA. Artifact Registry repository name is `apps`.
 
-Terraform is for the staging project baseline and, later, a VM worker. An app release is the GitHub workflow, so an old repository can adopt it by adding one caller file.
+Terraform is the only thing that creates, changes, or deletes GCP resources for an app. A pull request runs `terraform plan` and comments the add, change, and destroy list. The merge builds the image, plans again, and applies. Details are in [resources.md](resources.md).
 
 ## Auth
 

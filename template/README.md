@@ -28,4 +28,4 @@ cd frontend && npm run lint && npm run typecheck
 
 ## Deploy
 
-Merging to `staging` deploys `opptra-staging`. Merging `staging` into `main` deploys `prod_project` from `service.yaml`. Both go through `opptra/sdlc`. See that repository's `docs/new-app.md`.
+A pull request plans Terraform and comments the add, change, and destroy list. Merging to `staging` builds the image and applies the plan in `opptra-staging`. Merging `staging` into `main` does the same in `prod_project` from `service.yaml`. See `docs/resources.md` in `opptra/sdlc`.

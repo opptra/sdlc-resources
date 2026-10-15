@@ -3,3 +3,5 @@
 
 .github/workflows/ @opptra/platform
 service.yaml @opptra/platform
+infra/ @opptra/platform
+scripts/render_tfvars.py @opptra/platform

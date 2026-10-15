@@ -23,3 +23,22 @@ jobs:
     uses: ./.github/workflows/ci.yml
     with:
       working_directory: template
+
+  terraform:
+    name: terraform
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.5"
+          terraform_wrapper: false
+      - name: Format
+        run: terraform fmt -check -recursive
+      - name: Validate the template
+        working-directory: template/infra
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate

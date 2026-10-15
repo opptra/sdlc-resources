@@ -14,9 +14,12 @@ People should read [docs/lifecycle.md](docs/lifecycle.md) first, then the doc fo
 | [docs/migrating.md](docs/migrating.md) | Bring an existing repo onto the pipeline |
 | [docs/review.md](docs/review.md) | Dobby, human approval, CODEOWNERS |
 | [docs/alerting.md](docs/alerting.md) | The three production alerts |
-| [docs/gcp-bootstrap.md](docs/gcp-bootstrap.md) | Staging project, Workload Identity, budgets |
+| [docs/gcp-bootstrap.md](docs/gcp-bootstrap.md) | Staging project, state bucket, Workload Identity, budgets |
+| [docs/resources.md](docs/resources.md) | Where the build, the plan, and the apply run |
 | [.github/workflows/ci.yml](.github/workflows/ci.yml) | Reusable lint and test workflow |
-| [.github/workflows/deploy-cloud-run.yml](.github/workflows/deploy-cloud-run.yml) | Reusable Cloud Run deploy |
+| [.github/workflows/terraform-plan.yml](.github/workflows/terraform-plan.yml) | Plan on a pull request. Comments the diff. Changes nothing |
+| [.github/workflows/deploy-cloud-run.yml](.github/workflows/deploy-cloud-run.yml) | Build the image, then apply Terraform |
+| [modules/cloud-run-service](modules/cloud-run-service/) | The Cloud Run service, runtime account, and invoker IAM |
 | [template/](template/) | FastAPI + Vite app that calls those workflows |
 | [rules/](rules/) | Source copy of the agent rules |
 | [dobby/review-brief.md](dobby/review-brief.md) | Spec for the comment Dobby should post |
@@ -26,7 +29,7 @@ People should read [docs/lifecycle.md](docs/lifecycle.md) first, then the doc fo
 
 ## What v1 deliberately leaves out
 
-Cloud Run Job and VM worker workflows, Apps Script automation, release notes, PostHog, per-app Terraform, and a shared UI kit. The docs name the rule for those shapes. The workflow file comes later.
+Cloud Run Job and VM worker modules, Apps Script automation, release notes, PostHog, and a shared UI kit. The docs name the rule for those shapes. The workflow file comes later.
 
 ## Local check of the template
 

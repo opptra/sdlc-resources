@@ -9,3 +9,10 @@ dist/
 .uv/
 frontend/dist/
 backend/app/static/
+.terraform/
+*.tfstate
+*.tfstate.*
+ci.auto.tfvars.json
+plan.txt
+tfplan
+tfplan.*

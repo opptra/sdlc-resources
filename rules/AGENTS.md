@@ -1,6 +1,6 @@
 # Agent notes
 
-This app deploys only through the GitHub workflows that call `opptra/sdlc`. Read `service.yaml` for the service name, archetype, production project, region, and auth.
+This app deploys only through the GitHub workflows that call `opptra/sdlc`. Terraform in `infra/` is what changes GCP. Read `service.yaml` for the service name, archetype, production project, region, and auth.
 
 ## Branches
 

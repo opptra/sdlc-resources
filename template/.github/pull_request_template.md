@@ -6,7 +6,8 @@
 
 ## Risk
 
-- [ ] This diff does not touch `.github/workflows`, `service.yaml`, auth, billing, finance, or migrations
+- [ ] This diff does not touch `.github/workflows`, `infra/`, `service.yaml`, auth, billing, finance, or migrations
+- [ ] The Terraform plan comment has no unexpected destroy
 
 ## Staging
 

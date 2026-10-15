@@ -27,7 +27,7 @@ Nits:
 - <or "None.">
 ```
 
-`needs a human` is required when the diff touches `.github/workflows`, `service.yaml`, auth, billing, finance, migrations, a secret, a deploy script, or an image tag that is not a git SHA.
+`needs a human` is required when the diff touches `.github/workflows`, `infra/`, `service.yaml`, auth, billing, finance, migrations, a secret, a deploy script, or an image tag that is not a git SHA. Also when the Terraform plan comment contains a destroy.
 
 ## Blocking, not a nit
 
@@ -35,7 +35,8 @@ Nits:
 - A script whose default target is a production project.
 - A deploy that uses a floating tag such as `latest`.
 - CI lint or tests failing.
-- A pull request that mixes product code with workflow or `service.yaml` changes. Ask for a split.
+- A pull request that mixes product code with workflow, `infra/`, or `service.yaml` changes. Ask for a split.
+- A Terraform plan that destroys a database, a service account, or a Cloud Run service, unless the pull request says that is the point.
 - Staging configured to read a secret whose id ends in `_PROD`.
 
 ## Stay quiet

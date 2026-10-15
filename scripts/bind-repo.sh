@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Let one GitHub repository deploy one Cloud Run service.
+# Let one GitHub repository plan and apply Terraform for one app.
 # Usage: scripts/bind-repo.sh <org/repo> <prod-project-id>
-# Requires the Workload Identity pool from docs/gcp-bootstrap.md.
+# Creates the CI service account only. Terraform creates the Cloud Run service
+# and the runtime service account. Requires docs/gcp-bootstrap.md first.
 
 set -euo pipefail
 
@@ -47,6 +48,9 @@ enable_apis() {
     secretmanager.googleapis.com \
     iamcredentials.googleapis.com \
     iam.googleapis.com \
+    cloudresourcemanager.googleapis.com \
+    iap.googleapis.com \
+    storage.googleapis.com \
     --project="$project"
 }
 
@@ -84,19 +88,26 @@ grant_project_role() {
 bind_deployer() {
   local project="$1"
   local deployer="${NAME}-deployer@${project}.iam.gserviceaccount.com"
-  local runtime="${NAME}-runtime@${project}.iam.gserviceaccount.com"
+  local bucket="${project}-tfstate"
+
+  if ! gcloud storage buckets describe "gs://${bucket}" >/dev/null 2>&1; then
+    echo "missing Terraform state bucket gs://${bucket}. Follow docs/gcp-bootstrap.md." >&2
+    exit 1
+  fi
 
   ensure_sa "$project" "${NAME}-deployer"
-  ensure_sa "$project" "${NAME}-runtime"
-
   grant_project_role "$project" "$deployer" roles/run.admin
   grant_project_role "$project" "$deployer" roles/artifactregistry.writer
-  grant_project_role "$project" "$runtime" roles/secretmanager.secretAccessor
+  grant_project_role "$project" "$deployer" roles/iam.serviceAccountAdmin
+  grant_project_role "$project" "$deployer" roles/iam.serviceAccountUser
 
-  gcloud iam service-accounts add-iam-policy-binding "$runtime" \
-    --project="$project" \
+  gcloud storage buckets add-iam-policy-binding "gs://${bucket}" \
     --member="serviceAccount:${deployer}" \
-    --role=roles/iam.serviceAccountUser \
+    --role="roles/storage.objectAdmin" \
+    --quiet >/dev/null
+  gcloud storage buckets add-iam-policy-binding "gs://${bucket}" \
+    --member="serviceAccount:${deployer}" \
+    --role="roles/storage.legacyBucketReader" \
     --quiet >/dev/null
 
   gcloud iam service-accounts add-iam-policy-binding "$deployer" \
