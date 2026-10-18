@@ -4,29 +4,23 @@ on:
   workflow_call:
     inputs:
       environment:
-        description: staging or prod
         required: true
         type: string
       wif_provider:
-        description: Workload Identity provider resource name
         required: true
         type: string
       wif_service_account:
-        description: Deployer service account email
+        required: true
+        type: string
+      manifest:
+        required: true
+        type: string
+      working_directory:
         required: true
         type: string
       staging_project:
-        description: Shared staging project id
         type: string
         default: opptra-staging
-      working_directory:
-        description: App root. Contains service.yaml, the Dockerfile, and infra/
-        type: string
-        default: "."
-      artifact_repo:
-        description: Artifact Registry repository id
-        type: string
-        default: apps
 
 permissions:
   contents: read
@@ -39,69 +33,49 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment == 'prod' && 'production' || 'staging' }}
     concurrency:
-      group: deploy-${{ github.repository }}-${{ inputs.environment }}
+      group: deploy-${{ github.repository }}-${{ inputs.working_directory }}-${{ inputs.environment }}
       cancel-in-progress: false
-    defaults:
-      run:
-        working-directory: ${{ inputs.working_directory }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Write Terraform variables
-        id: manifest
+      - uses: actions/checkout@v4
+      - id: manifest
         env:
           ENVIRONMENT: ${{ inputs.environment }}
           STAGING_PROJECT: ${{ inputs.staging_project }}
-          ARTIFACT_REPO: ${{ inputs.artifact_repo }}
           SHA: ${{ github.sha }}
+          MANIFEST: ${{ inputs.manifest }}
           WIF_PROVIDER: ${{ inputs.wif_provider }}
           WIF_SERVICE_ACCOUNT: ${{ inputs.wif_service_account }}
         run: |
-          if [ "$ENVIRONMENT" != "staging" ] && [ "$ENVIRONMENT" != "prod" ]; then
-            echo "environment must be staging or prod" >&2
-            exit 1
-          fi
           if [ -z "$WIF_PROVIDER" ] || [ -z "$WIF_SERVICE_ACCOUNT" ]; then
-            echo "Set the WIF_PROVIDER_* and WIF_SERVICE_ACCOUNT_* Actions variables. scripts/bind-repo.sh prints them." >&2
+            echo "Set the WIF Actions variables. scripts/bind-repo.sh prints them." >&2
             exit 1
           fi
-          python3 scripts/render_tfvars.py \
-            --manifest service.yaml \
+          python3 "$GITHUB_WORKSPACE/scripts/render_tfvars.py" \
+            --manifest "$GITHUB_WORKSPACE/$MANIFEST" \
             --environment "$ENVIRONMENT" \
             --staging-project "$STAGING_PROJECT" \
             --sha "$SHA" \
-            --artifact-repo "$ARTIFACT_REPO" \
-            --out infra/ci.auto.tfvars.json \
+            --out "$GITHUB_WORKSPACE/${{ inputs.working_directory }}/infra/ci.auto.tfvars.json" \
             --github-output "$GITHUB_OUTPUT"
-
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
+      - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ inputs.wif_provider }}
           service_account: ${{ inputs.wif_service_account }}
-
-      - name: Set up gcloud
-        uses: google-github-actions/setup-gcloud@v2
-
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
+      - uses: google-github-actions/setup-gcloud@v2
+      - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.10.5"
           terraform_wrapper: false
-
-      - name: Build and push the image
+      - name: Build and push
         env:
           IMAGE: ${{ steps.manifest.outputs.image }}
           REGION: ${{ steps.manifest.outputs.region }}
+        working-directory: ${{ inputs.working_directory }}
         run: |
-          set -euo pipefail
           gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
           docker build -t "$IMAGE" .
           docker push "$IMAGE"
-
       - name: Apply
-        id: apply
         env:
           PROJECT: ${{ steps.manifest.outputs.project_id }}
           NAME: ${{ steps.manifest.outputs.name }}
@@ -112,28 +86,24 @@ jobs:
           terraform init -input=false \
             -backend-config="bucket=${PROJECT}-tfstate" \
             -backend-config="prefix=${NAME}"
-          terraform plan -input=false -lock-timeout=120s \
-            -var-file=ci.auto.tfvars.json -out=tfplan
+          terraform plan -input=false -lock-timeout=120s -var-file=ci.auto.tfvars.json -out=tfplan
           terraform apply -input=false -lock-timeout=120s tfplan
-          URL="$(terraform output -raw uri)"
-          if [ "$AUTH" = "iap" ]; then
-            echo "IAP is on. Skipped the public health request."
-          else
-            curl --fail --silent --show-error "${URL}/api/health"
+          if terraform output -raw uri >/tmp/uri 2>/dev/null; then
+            URL="$(cat /tmp/uri)"
+            if [ "$AUTH" != "iap" ]; then
+              curl --fail --silent --show-error "${URL}/api/health"
+            fi
+            echo "url=${URL}" >> "$GITHUB_OUTPUT"
           fi
-          echo "url=${URL}" >> "$GITHUB_OUTPUT"
-
+        id: apply
       - name: Comment the staging URL
-        if: inputs.environment == 'staging'
+        if: inputs.environment == 'staging' && steps.apply.outputs.url != ''
         env:
           GH_TOKEN: ${{ github.token }}
           URL: ${{ steps.apply.outputs.url }}
           SHA: ${{ github.sha }}
         run: |
-          set -euo pipefail
           PR="$(gh pr list --repo "$GITHUB_REPOSITORY" --search "$SHA" --state all --json number --jq '.[0].number')"
-          if [ -z "$PR" ]; then
-            echo "No pull request found for $SHA"
-            exit 0
+          if [ -n "$PR" ]; then
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "Staging is up: ${URL}"
           fi
-          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "Staging is up: ${URL}"

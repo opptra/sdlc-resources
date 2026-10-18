@@ -2,8 +2,10 @@
 # branch protection requires code owner review.
 
 .github/workflows/ @opptra/platform
+mapping.yaml @opptra/platform
 modules/ @opptra/platform
 scripts/ @opptra/platform
-template/ @opptra/platform
+skeletons/ @opptra/platform
+skills/ @opptra/platform
 rules/ @opptra/platform
 dobby/ @opptra/platform

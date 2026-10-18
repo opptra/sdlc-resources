@@ -1,5 +1,0 @@
-name: example-app
-archetype: cloud-run-service
-prod_project: opptra-applications
-region: asia-south1
-auth: app-login

@@ -4,11 +4,11 @@ The language can stay. The contract is the branches, the required lint check, th
 
 ## 1. Add the manifest and the callers
 
-Add `service.yaml` at the repo root. Copy `infra/` and `scripts/render_tfvars.py` from the template. In `infra/main.tf`, set the module source to `git::https://github.com/opptra/sdlc.git//modules/cloud-run-service?ref=v1`. Copy the caller workflows from [template/.github/workflows/](../template/.github/workflows/) and the pull request template. Copy `AGENTS.md` and `.cursor/rules/` from [rules/](../rules/) and edit the app name, archetype, and prod project.
+Write a service.yaml of facts and run [scripts/generate.py](../scripts/generate.py) into an empty directory, then copy in the pieces that match this repo. Do not copy a hardcoded pipeline by hand. Point prod_project at the project that already runs production.
 
 Point `prod_project` at the project that already runs production. Do not move production projects as part of this step.
 
-Protect `staging` and `main` with [scripts/protect-branches.sh](../scripts/protect-branches.sh) after CI has run once. Create `staging` from the current default branch if it does not exist.
+Protect `main` and `production` with [scripts/protect-branches.sh](../scripts/protect-branches.sh) after CI has run once. `staging` stays unprotected. `main` is the default branch and does not deploy. Create `staging` and `production` from `main`.
 
 ## 2. Make lint a required check
 

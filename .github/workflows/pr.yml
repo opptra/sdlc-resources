@@ -3,42 +3,28 @@ name: ci
 on:
   pull_request:
   push:
-    branches: [main, staging]
+    branches: [main, staging, production]
 
 permissions:
   contents: read
 
 jobs:
-  manifest:
-    name: manifest
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Check the template manifest
-        run: python3 scripts/check_manifest.py template/service.yaml
-
-  ci:
+  tests:
     name: ci
-    uses: ./.github/workflows/ci.yml
-    with:
-      working_directory: template
-
-  terraform:
-    name: terraform
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@v4
+      - name: Generator tests
+        run: |
+          python3 - << 'PY'
+          import tests.test_generate as t
+          t.test_manifest_ok()
+          t.test_apps_script_is_rejected()
+          t.test_generate_selects_capabilities()
+          PY
+      - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.10.5"
           terraform_wrapper: false
-      - name: Format
+      - name: Terraform format
         run: terraform fmt -check -recursive
-      - name: Validate the template
-        working-directory: template/infra
-        run: |
-          terraform init -backend=false -input=false
-          terraform validate

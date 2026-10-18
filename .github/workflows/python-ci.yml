@@ -1,0 +1,46 @@
+name: python-ci
+
+on:
+  workflow_call:
+    inputs:
+      python_version:
+        type: string
+        default: "3.12"
+      working_directory:
+        description: Directory that contains pyproject.toml and backend/
+        type: string
+        default: "."
+      run_tests:
+        type: string
+        default: auto
+
+jobs:
+  python-ci:
+    name: python-ci
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ inputs.python_version }}
+      - name: Lint
+        run: |
+          uv sync --frozen
+          uv run ruff check .
+          uv run ruff format --check .
+      - name: Test
+        env:
+          RUN_TESTS: ${{ inputs.run_tests }}
+        run: |
+          if [ "$RUN_TESTS" = "false" ]; then
+            echo "pytest skipped"
+            exit 0
+          fi
+          if [ "$RUN_TESTS" = "auto" ] && [ -z "$(find backend/tests -name 'test_*.py' -print -quit 2>/dev/null)" ]; then
+            echo "pytest skipped; no tests"
+            exit 0
+          fi
+          uv run pytest

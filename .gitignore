@@ -7,6 +7,7 @@ node_modules/
 dist/
 *.pyc
 .uv/
+rules/dist/
 frontend/dist/
 backend/app/static/
 .terraform/

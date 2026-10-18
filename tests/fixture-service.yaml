@@ -1,0 +1,12 @@
+name: example-app
+prod_project: opptra-applications
+region: asia-south1
+components:
+  - name: console
+    archetype: cloud-run-service
+    auth: iap
+    parts: [ui, api]
+  - name: nightly
+    archetype: cloud-run-job
+    auth: none
+    parts: [job]

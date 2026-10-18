@@ -1,0 +1,69 @@
+name: deploy-worker
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      wif_provider:
+        required: true
+        type: string
+      wif_service_account:
+        required: true
+        type: string
+      manifest:
+        required: true
+        type: string
+      working_directory:
+        required: true
+        type: string
+      staging_project:
+        type: string
+        default: opptra-staging
+      artifact_repo:
+        type: string
+        default: apps
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    name: deploy
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment == 'prod' && 'production' || 'staging' }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: manifest
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          STAGING_PROJECT: ${{ inputs.staging_project }}
+          SHA: ${{ github.sha }}
+          MANIFEST: ${{ inputs.manifest }}
+          ARTIFACT_REPO: ${{ inputs.artifact_repo }}
+        run: |
+          python3 "$GITHUB_WORKSPACE/scripts/render_tfvars.py" \
+            --manifest "$GITHUB_WORKSPACE/$MANIFEST" \
+            --environment "$ENVIRONMENT" \
+            --staging-project "$STAGING_PROJECT" \
+            --sha "$SHA" \
+            --artifact-repo "$ARTIFACT_REPO" \
+            --out /tmp/worker.tfvars.json \
+            --github-output "$GITHUB_OUTPUT"
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ inputs.wif_provider }}
+          service_account: ${{ inputs.wif_service_account }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Build and push the worker image
+        working-directory: ${{ inputs.working_directory }}
+        env:
+          IMAGE: ${{ steps.manifest.outputs.image }}
+          REGION: ${{ steps.manifest.outputs.region }}
+        run: |
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "Image pushed. This workflow does not restart the VM."

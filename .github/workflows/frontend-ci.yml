@@ -1,0 +1,29 @@
+name: frontend-ci
+
+on:
+  workflow_call:
+    inputs:
+      working_directory:
+        description: Directory that contains package.json
+        type: string
+        required: true
+
+jobs:
+  frontend-ci:
+    name: frontend-ci
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ${{ inputs.working_directory }}/package-lock.json
+      - name: Lint
+        run: |
+          npm ci
+          npm run lint
+          npm run typecheck

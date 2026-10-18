@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Require a pull request, one approval, and the CI check on staging and main.
+# Protect main and production. staging stays unprotected so a push deploys it.
 # Usage: scripts/protect-branches.sh <org/repo>
-# The check name GitHub shows for the reusable workflow is "ci / ci"
-# unless CHECK_NAME is set to the name from a real pull request.
+# Set PLAN_CHECK=plan when the repo has a Terraform plan workflow.
 
 set -euo pipefail
 
@@ -12,9 +11,13 @@ if [[ $# -ne 1 ]]; then
 fi
 
 REPO="$1"
-CHECK_NAME="${CHECK_NAME:-ci / ci}"
+CHECK_NAME="${CHECK_NAME:-ci}"
+CONTEXTS="[\"${CHECK_NAME}\"]"
+if [[ -n "${PLAN_CHECK:-}" ]]; then
+  CONTEXTS="[\"${CHECK_NAME}\", \"${PLAN_CHECK}\"]"
+fi
 
-for branch in staging main; do
+for branch in main production; do
   if ! gh api "repos/${REPO}/branches/${branch}" >/dev/null 2>&1; then
     echo "${REPO} has no ${branch} branch. Push it, then run this script again." >&2
     exit 1
@@ -24,7 +27,7 @@ for branch in staging main; do
 {
   "required_status_checks": {
     "strict": true,
-    "contexts": ["${CHECK_NAME}", "plan / plan"]
+    "contexts": ${CONTEXTS}
   },
   "enforce_admins": true,
   "required_pull_request_reviews": {
@@ -36,5 +39,5 @@ for branch in staging main; do
   "allow_deletions": false
 }
 JSON
-  echo "protected ${REPO}@${branch} (required checks: ${CHECK_NAME}, plan / plan)"
+  echo "protected ${REPO}@${branch}"
 done

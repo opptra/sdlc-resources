@@ -10,10 +10,10 @@ All of this runs on a GitHub-hosted runner, in the app repository, by calling wo
 |---|---|---|
 | Lint and tests | Every pull request | Nothing |
 | `terraform plan` | Every pull request | Reads state and the live project. Writes a comment. Changes nothing. |
-| `docker build` and push | Merge to `staging` or `main` | Pushes an image tagged with that commit's SHA to Artifact Registry in the target project |
+| `docker build` and push | Merge to `staging` or `production` | Pushes an image tagged with that commit's SHA to Artifact Registry in the target project |
 | `terraform plan` again, then `terraform apply` | Same merge, after the push | Creates, updates, or deletes resources so the project matches `infra/` |
 
-A pull request into `staging` plans `opptra-staging`. A pull request from `staging` into `main` plans `prod_project` from `service.yaml`. The merge applies to that same project.
+A pull request into `main` plans `opptra-staging` and does not apply. A push to `staging` applies that plan in the staging project. A pull request into `production` plans `prod_project`, and the merge applies it.
 
 The plan on the pull request is the one a person reads. The merge creates a new commit, so the apply job plans again for that commit and applies that plan. The image tag in the applied plan is the commit that landed on the branch.
 

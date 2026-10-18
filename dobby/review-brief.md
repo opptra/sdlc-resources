@@ -27,7 +27,7 @@ Nits:
 - <or "None.">
 ```
 
-`needs a human` is required when the diff touches `.github/workflows`, `infra/`, `service.yaml`, auth, billing, finance, migrations, a secret, a deploy script, or an image tag that is not a git SHA. Also when the Terraform plan comment contains a destroy.
+`needs a human` is required when the diff touches `.github/workflows`, `infra/`, `service.yaml`, auth, billing, finance, migrations, a secret, a deploy script, or an image tag that is not a git SHA. Also when the Terraform plan comment contains a destroy. Production deploys only from a pull request into the production branch.
 
 ## Blocking, not a nit
 

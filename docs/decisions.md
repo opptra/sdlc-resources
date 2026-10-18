@@ -20,9 +20,11 @@ There is no Vercel path. `opptra-o2c` moves to Cloud Run when it is migrated.
 
 ## How code moves
 
-Feature branch off `staging`. Pull request into `staging` deploys staging. Pull request from `staging` into `main` deploys production. Both branches are protected. One human approves. Dobby reviews every pull request and does not count as that approval.
+`main` is the default branch. A feature branch is cut from `main` and the pull request targets `main`. Merging to `main` does not deploy.
 
-A bad release is a revert through `staging` and then `main`. The pipeline deploys the reverted SHA.
+A push of `main` onto `staging` deploys staging. `staging` is not a protected branch. A pull request from `main` into `production` deploys production on merge. One human approves. Dobby reviews every pull request and does not count as that approval.
+
+A bad release is a revert through `main`, then `staging`, then `production`.
 
 ## CI
 

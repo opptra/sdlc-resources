@@ -1,0 +1,83 @@
+name: deploy-job
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      wif_provider:
+        required: true
+        type: string
+      wif_service_account:
+        required: true
+        type: string
+      manifest:
+        required: true
+        type: string
+      working_directory:
+        required: true
+        type: string
+      staging_project:
+        type: string
+        default: opptra-staging
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    name: deploy
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment == 'prod' && 'production' || 'staging' }}
+    concurrency:
+      group: deploy-${{ github.repository }}-${{ inputs.working_directory }}-${{ inputs.environment }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - id: manifest
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          STAGING_PROJECT: ${{ inputs.staging_project }}
+          SHA: ${{ github.sha }}
+          MANIFEST: ${{ inputs.manifest }}
+          WIF_PROVIDER: ${{ inputs.wif_provider }}
+          WIF_SERVICE_ACCOUNT: ${{ inputs.wif_service_account }}
+        run: |
+          python3 "$GITHUB_WORKSPACE/scripts/render_tfvars.py" \
+            --manifest "$GITHUB_WORKSPACE/$MANIFEST" \
+            --environment "$ENVIRONMENT" \
+            --staging-project "$STAGING_PROJECT" \
+            --sha "$SHA" \
+            --out "$GITHUB_WORKSPACE/${{ inputs.working_directory }}/infra/ci.auto.tfvars.json" \
+            --github-output "$GITHUB_OUTPUT"
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ inputs.wif_provider }}
+          service_account: ${{ inputs.wif_service_account }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.5"
+          terraform_wrapper: false
+      - name: Build and push
+        working-directory: ${{ inputs.working_directory }}
+        env:
+          IMAGE: ${{ steps.manifest.outputs.image }}
+          REGION: ${{ steps.manifest.outputs.region }}
+        run: |
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+      - name: Apply the job without running it
+        working-directory: ${{ inputs.working_directory }}/infra
+        env:
+          PROJECT: ${{ steps.manifest.outputs.project_id }}
+          NAME: ${{ steps.manifest.outputs.name }}
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=${PROJECT}-tfstate" \
+            -backend-config="prefix=${NAME}"
+          terraform plan -input=false -lock-timeout=120s -var-file=ci.auto.tfvars.json -out=tfplan
+          terraform apply -input=false -lock-timeout=120s tfplan

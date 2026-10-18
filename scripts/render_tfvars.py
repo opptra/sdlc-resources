@@ -42,12 +42,12 @@ def main() -> int:
     missing = [key for key in required if not manifest.get(key)]
     if missing:
         raise SystemExit(f"{args.manifest} missing: {', '.join(missing)}")
-    if manifest["archetype"] != "cloud-run-service":
+    if manifest["archetype"] not in {"cloud-run-service", "cloud-run-job", "vm-worker"}:
         raise SystemExit(
-            "this workflow applies archetype cloud-run-service, "
+            "this workflow applies cloud-run-service, cloud-run-job, or vm-worker, "
             f"got {manifest['archetype']}"
         )
-    if manifest["auth"] not in {"app-login", "iap", "public"}:
+    if manifest["auth"] not in {"app-login", "iap", "public", "none"}:
         raise SystemExit(f"unsupported auth {manifest['auth']}")
     if not args.sha or args.sha.startswith("latest"):
         raise SystemExit("sha must be the git commit, not a floating tag")

@@ -1,0 +1,55 @@
+version: 1
+ref: v1
+parts:
+  api:
+    skeleton: skeletons/api
+    capabilities: [python-ci, terraform-plan, deploy-cloud-run]
+    rules: [python, terraform]
+    terraform_module: cloud-run-service
+  ui:
+    skeleton: skeletons/ui
+    capabilities: [frontend-ci]
+    rules: [react]
+  job:
+    skeleton: skeletons/job
+    capabilities: [python-ci, terraform-plan, deploy-job]
+    rules: [python, job, terraform]
+    terraform_module: cloud-run-job
+  worker:
+    skeleton: skeletons/worker
+    capabilities: [python-ci, deploy-worker]
+    rules: [python, worker]
+  config:
+    skeleton: skeletons/config
+    capabilities: [config-ci]
+    rules: [config]
+capabilities:
+  python-ci:
+    workflow: python-ci.yml
+    directory: component
+  frontend-ci:
+    workflow: frontend-ci.yml
+    directory: frontend
+  config-ci:
+    workflow: config-ci.yml
+    directory: repo
+  terraform-plan:
+    workflow: terraform-plan.yml
+    directory: component
+  deploy-cloud-run:
+    workflow: deploy-cloud-run.yml
+    directory: component
+  deploy-job:
+    workflow: deploy-job.yml
+    directory: component
+  deploy-worker:
+    workflow: deploy-worker.yml
+    directory: component
+rules:
+  always: rules/source/always.md
+  python: rules/source/python.md
+  react: rules/source/react.md
+  terraform: rules/source/terraform.md
+  job: rules/source/job.md
+  worker: rules/source/worker.md
+  config: rules/source/config.md

@@ -1,0 +1,15 @@
+name: config-ci
+
+on:
+  workflow_call:
+
+jobs:
+  config-ci:
+    name: config-ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Manifest and readme exist
+        run: |
+          test -f service.yaml
+          test -f README.md
