@@ -9,7 +9,8 @@ Apps Script is unsupported. Report it and leave the repository unchanged.
 These do not move the running app.
 
 - `service.yaml` at the repo root, with `name`, `purpose`, `prod_project`, `region`, and `components`. Facts only. Archetype is `cloud-run-service`, `cloud-run-job`, `vm-worker`, or `config-only`.
-- `AGENTS.md`, `CLAUDE.md`, and `.cursor/rules` generated from `rules/source/` for the parts that are actually present.
+- `AGENTS.md`, `CLAUDE.md`, and `.cursor/rules` from `rules/source/` for the parts that are present. A file that already exists is not finished. Compare it with `rules/source/always.md`. If it is missing the commit format, the Linear link, the confirmations, the feature-or-bug choice, or the OpenSpec requirement, recommend replacing it with the current source. Show the missing sentences before writing.
+- A README that says what the app is, how to run it locally, and how to deploy. Use the purpose. Local commands match the parts: `uv` and uvicorn for an API, `npm run dev` for a UI, `python -m app.main` for a job or a worker. Deploy text says `main` does not deploy, a push of `main` onto `staging` deploys staging, and a pull request from `main` into `production` deploys production. A config-only repo says there is nothing to run or deploy. If the README already has these sections, skip this line.
 - A pull-request-only CI caller for the languages that are already in the repo. Python gets `python-ci`. A Vite or React UI gets `frontend-ci`. Config with no service gets `config-ci`. The caller uses `opptra/sdlc-resources` at `main`.
 - Branches `main`, `staging`, and `production` when they are missing. `main` is the default and does not deploy. `staging` stays unprotected. `production` is protected.
 
@@ -55,8 +56,12 @@ Recommendation: leave the script until one staging deploy through GitHub has suc
 
 Recommendation: add that caller only when the component is ready to ship through GitHub.
 
-### OpenSpec is missing
+### OpenSpec
 
-Look for an `openspec/` directory.
+Run `openspec --version`. Look for an `openspec/` directory.
 
-Recommendation: do not install OpenSpec in the alignment pull request. Install `@fission-ai/openspec` when the first feature starts, with `npm install -g @fission-ai/openspec@latest` and `openspec init --tools cursor,claude` from the repo root.
+If the command fails, or the directory is missing, show this recommendation. Do not install OpenSpec in the alignment turn. When the first feature starts, install it with `npm install -g @fission-ai/openspec@latest` and run `openspec init --tools cursor,claude` from the repo root.
+
+### Linear
+
+Try to read a Linear issue for this repository. If Linear is not connected, show this recommendation. Ask the developer to connect Linear in Cursor or Claude. Branch names, commit messages, and pull requests need a ticket id. Do not invent one. Do not block the **Add now** lines on this connection.
