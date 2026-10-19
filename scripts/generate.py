@@ -89,6 +89,7 @@ def write_infra(mapping: dict, app: dict, component: dict, dest: Path) -> None:
     infra = dest / "infra"
     infra.mkdir()
     ref = mapping["ref"]
+    repo = mapping["repo"]
     (infra / "versions.tf").write_text(
         """terraform {
   required_version = ">= 1.9.0"
@@ -118,7 +119,7 @@ provider "google" {
     (infra / "main.tf").write_text(
         f"""# {STAMP}
 module "service" {{
-  source = "git::https://github.com/opptra/sdlc.git//modules/{module}?ref={ref}"
+  source = "git::https://github.com/{repo}.git//modules/{module}?ref={ref}"
 
   project_id  = var.project_id
   region      = var.region
@@ -135,8 +136,8 @@ module "service" {{
     del app
 
 
-def workflow_call(job_id: str, workflow: str, ref: str, arguments: dict[str, str]) -> str:
-    lines = [f"  {job_id}:", f"    uses: opptra/sdlc/.github/workflows/{workflow}@{ref}"]
+def workflow_call(job_id: str, workflow: str, repo: str, ref: str, arguments: dict[str, str]) -> str:
+    lines = [f"  {job_id}:", f"    uses: {repo}/.github/workflows/{workflow}@{ref}"]
     if arguments:
         lines.append("    with:")
         for key, value in arguments.items():
@@ -177,24 +178,23 @@ def write_workflows(mapping: dict, components: list[dict], dest: Path) -> None:
                 )
             else:
                 ci_jobs.append((job_id, spec["workflow"], args))
-    write_gate(workflows / "ci.yml", "ci", ci_jobs, ref, """on:
+    repo = mapping["repo"]
+    write_gate(workflows / "ci.yml", "ci", ci_jobs, repo, ref, """on:
   pull_request:
-  push:
-    branches: [main, staging, production]
 """)
     if plan_jobs:
-        write_plan(workflows / "plan.yml", plan_jobs, ref)
+        write_plan(workflows / "plan.yml", plan_jobs, repo, ref)
     if deploy_staging:
-        write_deploy(workflows / "deploy-staging.yml", "staging", deploy_staging, ref)
-        write_deploy(workflows / "deploy-production.yml", "production", deploy_production, ref)
+        write_deploy(workflows / "deploy-staging.yml", "staging", deploy_staging, repo, ref)
+        write_deploy(workflows / "deploy-production.yml", "production", deploy_production, repo, ref)
 
 
-def write_gate(path: Path, name: str, jobs: list, ref: str, trigger: str) -> None:
+def write_gate(path: Path, name: str, jobs: list, repo: str, ref: str, trigger: str) -> None:
     body = [f"# {STAMP}", f"name: {name}", trigger, "permissions:", "  contents: read", "jobs:"]
     ids = []
     for job_id, workflow, args in jobs:
         ids.append(job_id)
-        body.append(workflow_call(job_id, workflow, ref, args))
+        body.append(workflow_call(job_id, workflow, repo, ref, args))
     needs = ", ".join(ids) if ids else ""
     body.append("  ci:")
     if needs:
@@ -205,7 +205,7 @@ def write_gate(path: Path, name: str, jobs: list, ref: str, trigger: str) -> Non
     path.write_text("\n".join(body) + "\n")
 
 
-def write_plan(path: Path, jobs: list, ref: str) -> None:
+def write_plan(path: Path, jobs: list, repo: str, ref: str) -> None:
     body = [
         f"# {STAMP}",
         "name: plan",
@@ -221,7 +221,7 @@ def write_plan(path: Path, jobs: list, ref: str) -> None:
     ids = []
     for job_id, workflow, args in jobs:
         ids.append(job_id)
-        body.append(workflow_call(job_id, workflow, ref, {
+        body.append(workflow_call(job_id, workflow, repo, ref, {
             **args,
             "environment": "${{ github.base_ref == 'production' && 'prod' || 'staging' }}",
             "wif_provider": "${{ github.base_ref == 'production' && vars.WIF_PROVIDER_PROD || vars.WIF_PROVIDER_STAGING }}",
@@ -236,7 +236,7 @@ def write_plan(path: Path, jobs: list, ref: str) -> None:
     path.write_text("\n".join(body) + "\n")
 
 
-def write_deploy(path: Path, branch: str, jobs: list, ref: str) -> None:
+def write_deploy(path: Path, branch: str, jobs: list, repo: str, ref: str) -> None:
     body = [
         f"# {STAMP}",
         f"name: deploy-{branch}",
@@ -252,7 +252,7 @@ def write_deploy(path: Path, branch: str, jobs: list, ref: str) -> None:
     for job_id, workflow, args in jobs:
         environment = args["environment"]
         suffix = "PROD" if environment == "prod" else "STAGING"
-        body.append(workflow_call(job_id, workflow, ref, {
+        body.append(workflow_call(job_id, workflow, repo, ref, {
             "environment": environment,
             "working_directory": args["working_directory"],
             "manifest": args["manifest"],
@@ -266,30 +266,74 @@ def write_readme(app: dict, components: list[dict], dest: Path) -> None:
     lines = [
         f"# {app['name']}",
         "",
+        str(app["purpose"]).strip(),
+        "",
         f"Production project: `{app['prod_project']}`. Region: `{app['region']}`.",
         "",
-        "main is the default branch and does not deploy.",
-        "A merge into staging deploys staging.",
-        "A merge into production deploys production.",
-        "",
-        "Components:",
+        "## Components",
         "",
     ]
+    has_deploy = False
+    local: list[str] = []
+    tests: list[str] = []
     for component in components:
-        parts = ", ".join(component["parts"])
+        name = component["name"]
+        parts = set(component["parts"])
         lines.append(
-            f"- `{component['name']}` ({component['archetype']}, auth {component['auth']}, parts {parts})"
+            f"- `{name}` ({component['archetype']}, auth {component['auth']}, parts {', '.join(component['parts'])})"
         )
-    lines += [
-        "",
-        "Tests:",
-        "",
-        "```bash",
-        "cd components/<name> && uv run pytest",
-        "cd components/<name>/frontend && npm run lint && npm run typecheck",
-        "```",
-        "",
-    ]
+        root = f"components/{name}"
+        if "api" in parts or "job" in parts or "worker" in parts:
+            tests.append(f"cd {root} && uv run ruff check . && uv run pytest")
+        if "ui" in parts:
+            tests.append(f"cd {root}/frontend && npm run lint && npm run typecheck")
+        if "api" in parts and "ui" in parts:
+            local.append(
+                f"cd {root}\n"
+                "uv sync\n"
+                "uv run uvicorn app.main:app --app-dir backend --reload --port 8000\n"
+                "\n"
+                f"cd {root}/frontend\n"
+                "npm ci\n"
+                "npm run dev"
+            )
+        elif "api" in parts:
+            local.append(
+                f"cd {root}\n"
+                "uv sync\n"
+                "uv run uvicorn app.main:app --app-dir backend --reload --port 8000"
+            )
+        elif "job" in parts or "worker" in parts:
+            local.append(f"cd {root}\nuv sync\nuv run python -m app.main\nuv run pytest")
+        if parts & {"api", "job", "worker"}:
+            has_deploy = True
+    lines += ["", "## Run locally", ""]
+    if local:
+        lines.append("```bash")
+        lines.append("\n\n".join(local))
+        lines.append("```")
+    else:
+        lines.append("This repo has no service to run. Change the files and open a pull request into `main`.")
+    lines += ["", "## Tests", "", "```bash", "\n".join(tests) if tests else "No test command. Open a pull request into main.", "```"]
+    lines += ["", "## Deploy", ""]
+    if has_deploy:
+        lines += [
+            "`main` does not deploy. CI runs on the pull request.",
+            "",
+            "Push `main` onto `staging` to deploy staging. Open the URL the workflow comments.",
+            "",
+            "```bash",
+            "git checkout staging",
+            "git pull",
+            "git merge main",
+            "git push",
+            "```",
+            "",
+            "Then open a pull request from `main` into `production` and merge it. That deploys production.",
+            "",
+        ]
+    else:
+        lines += ["This repo does not deploy. Merge pull requests into `main`.", ""]
     (dest / "README.md").write_text("\n".join(lines))
 
 

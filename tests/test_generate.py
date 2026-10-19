@@ -48,19 +48,28 @@ def test_generate_selects_capabilities() -> None:
             check=True,
         )
         ci = (dest / ".github" / "workflows" / "ci.yml").read_text()
-        assert "python-ci.yml" in ci
+        assert "opptra/sdlc-resources/.github/workflows/python-ci.yml@main" in ci
         assert "frontend-ci.yml" in ci
         assert "config-ci.yml" not in ci
+        assert "push:" not in ci
+        readme = (dest / "README.md").read_text()
+        assert "Example console and nightly job" in readme
+        assert "uv run uvicorn" in readme
+        assert "npm run dev" in readme
+        assert "git push" in readme
         deploy_staging = (dest / ".github" / "workflows" / "deploy-staging.yml").read_text()
         assert "branches: [staging]" in deploy_staging
         assert "deploy-cloud-run.yml" in deploy_staging
         assert "deploy-job.yml" in deploy_staging
         production = (dest / ".github" / "workflows" / "deploy-production.yml").read_text()
         assert "branches: [production]" in production
+        assert "opptra/sdlc-resources/.github/workflows/deploy-job.yml@main" in production
         assert (dest / "components" / "console" / "backend" / "tests" / "test_health.py").is_file()
         assert (dest / "components" / "console" / "frontend" / "package.json").is_file()
         assert (dest / "components" / "nightly" / "backend" / "tests" / "test_run.py").is_file()
         assert (dest / "CLAUDE.md").is_file()
-        assert "sdlc-rules-version: 1" in (dest / "AGENTS.md").read_text()
+        agents = (dest / "AGENTS.md").read_text()
+        assert "sdlc-rules-version: 1" in agents
+        assert "feat: <ticket-id>" in agents
         assert (dest / ".cursor" / "rules" / "react.mdc").is_file()
         assert not (dest / ".cursor" / "rules" / "worker.mdc").exists()

@@ -4,11 +4,16 @@
   "description": "Facts only. scripts/generate.py decides CI, rules, and deploy from these facts.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["name", "prod_project", "region", "components"],
+  "required": ["name", "purpose", "prod_project", "region", "components"],
   "properties": {
     "name": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9-]{1,48}$"
+    },
+    "purpose": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What this app is for, in a sentence or two. Written into the README."
     },
     "prod_project": {
       "type": "string",

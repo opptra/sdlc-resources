@@ -1,5 +1,6 @@
 version: 1
-ref: v1
+repo: opptra/sdlc-resources
+ref: main
 parts:
   api:
     skeleton: skeletons/api
