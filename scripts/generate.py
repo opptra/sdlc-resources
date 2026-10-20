@@ -38,6 +38,13 @@ def selected(mapping: dict, components: list[dict]) -> tuple[list[str], list[str
             for name in spec["rules"]:
                 if name not in rules:
                     rules.append(name)
+        if component.get("database") == "postgres":
+            if "database" not in rules:
+                rules.append("database")
+            if "terraform" not in rules:
+                rules.append("terraform")
+            if "terraform-plan" not in capabilities:
+                capabilities.append("terraform-plan")
     return capabilities, rules
 
 
@@ -75,6 +82,7 @@ def write_component_manifest(app: dict, component: dict, dest: Path) -> None:
         f"prod_project: {app['prod_project']}\n"
         f"region: {app['region']}\n"
         f"auth: {component['auth']}\n"
+        f"database: {component.get('database', 'none')}\n"
         f"parts: [{parts}]\n"
     )
     (dest / "service.yaml").write_text(text)
@@ -84,7 +92,8 @@ def write_infra(mapping: dict, app: dict, component: dict, dest: Path) -> None:
     module = None
     for part in component["parts"]:
         module = mapping["parts"][part].get("terraform_module") or module
-    if not module:
+    database = component.get("database") == "postgres"
+    if not module and not database:
         return
     infra = dest / "infra"
     infra.mkdir()
@@ -110,15 +119,29 @@ provider "google" {
 }
 """
     )
-    variables = ["project_id", "region", "name", "environment", "image"]
+    variables = ["project_id", "region", "name"]
+    if module:
+        variables.extend(["environment", "image"])
     if module == "cloud-run-service":
         variables.append("auth")
     body = "\n".join(f'variable "{name}" {{\n  type = string\n}}\n' for name in variables)
     (infra / "variables.tf").write_text(body)
     auth_line = '  auth        = var.auth\n' if module == "cloud-run-service" else ""
-    (infra / "main.tf").write_text(
-        f"""# {STAMP}
-module "service" {{
+    sql_line = "  cloud_sql_instance = module.db.connection_name\n" if database and module else ""
+    db_block = ""
+    if database:
+        db_block = f"""module "db" {{
+  source = "git::https://github.com/{repo}.git//modules/cloud-sql?ref={ref}"
+
+  project_id = var.project_id
+  region     = var.region
+  name       = var.name
+}}
+
+"""
+    service_block = ""
+    if module:
+        service_block = f"""module "service" {{
   source = "git::https://github.com/{repo}.git//modules/{module}?ref={ref}"
 
   project_id  = var.project_id
@@ -126,9 +149,19 @@ module "service" {{
   name        = var.name
   environment = var.environment
   image       = var.image
-{auth_line}}}
+{auth_line}{sql_line}}}
 """
-    )
+    secret_block = ""
+    if database and module:
+        secret_block = """
+resource "google_secret_manager_secret_iam_member" "db" {
+  project   = var.project_id
+  secret_id = module.db.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${module.service.runtime_service_account}"
+}
+"""
+    (infra / "main.tf").write_text(f"# {STAMP}\n{db_block}{service_block}{secret_block}")
     output = 'output "uri" {\n  value = module.service.uri\n}\n'
     if module == "cloud-run-job":
         output = 'output "name" {\n  value = module.service.name\n}\n'
@@ -307,6 +340,11 @@ def write_readme(app: dict, components: list[dict], dest: Path) -> None:
             local.append(f"cd {root}\nuv sync\nuv run python -m app.main\nuv run pytest")
         if parts & {"api", "job", "worker"}:
             has_deploy = True
+        if component.get("database") == "postgres":
+            local.append(
+                f"# Local Postgres for {name} only. Do not point this at Cloud SQL.\n"
+                "docker run --rm -e POSTGRES_PASSWORD=local -e POSTGRES_DB=app -p 5432:5432 postgres:16"
+            )
     lines += ["", "## Run locally", ""]
     if local:
         lines.append("```bash")

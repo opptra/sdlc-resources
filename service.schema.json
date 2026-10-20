@@ -50,6 +50,11 @@
               "type": "string",
               "enum": ["ui", "api", "job", "worker", "config"]
             }
+          },
+          "database": {
+            "type": "string",
+            "enum": ["postgres", "none"],
+            "description": "postgres adds Cloud SQL. Omit or use none when the component does not store data."
           }
         }
       }

@@ -89,6 +89,11 @@ def check(data: dict) -> list[str]:
                 f"{cname}: auth {component.get('auth')!r} does not fit {archetype}. "
                 f"Use one of: {', '.join(sorted(rule['auth']))}."
             )
+        database = component.get("database", "none")
+        if database not in {"postgres", "none"}:
+            errors.append(f"{cname}: database must be postgres or none")
+        if database == "postgres" and archetype == "config-only":
+            errors.append(f"{cname}: config-only cannot use a database")
     return errors
 
 

@@ -20,6 +20,7 @@ gcloud services enable \
   cloudresourcemanager.googleapis.com \
   iap.googleapis.com \
   storage.googleapis.com \
+  sqladmin.googleapis.com \
   --project=opptra-staging
 ```
 

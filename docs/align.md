@@ -56,6 +56,14 @@ Recommendation: leave the script until one staging deploy through GitHub has suc
 
 Recommendation: add that caller only when the component is ready to ship through GitHub.
 
+### A database is not Cloud SQL
+
+Look for Postgres in `docker-compose`, a database installed on the same VM as the app, Supabase, or a connection string in `.env` or `deploy.sh`.
+
+The standard is Cloud SQL Postgres, with `database: postgres` on the component, SQLAlchemy, and Alembic. The password stays in Secret Manager. Staging and production use different instances.
+
+Recommendation: do not create Cloud SQL or delete the current database during alignment. Move it in its own pull request after `service.yaml` exists.
+
 ### OpenSpec
 
 Run `openspec --version`. Look for an `openspec/` directory.

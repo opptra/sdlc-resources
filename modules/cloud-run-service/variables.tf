@@ -37,3 +37,9 @@ variable "image" {
   type        = string
   description = "Image to run, tagged with the git commit SHA."
 }
+
+variable "cloud_sql_instance" {
+  type        = string
+  default     = null
+  description = "Cloud SQL connection name. Null when this service has no database."
+}

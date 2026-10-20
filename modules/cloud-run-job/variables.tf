@@ -17,3 +17,8 @@ variable "environment" {
 variable "image" {
   type = string
 }
+
+variable "cloud_sql_instance" {
+  type    = string
+  default = null
+}

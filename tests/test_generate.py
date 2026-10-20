@@ -72,4 +72,7 @@ def test_generate_selects_capabilities() -> None:
         assert "sdlc-rules-version: 1" in agents
         assert "feat: <ticket-id>" in agents
         assert (dest / ".cursor" / "rules" / "react.mdc").is_file()
+        assert (dest / ".cursor" / "rules" / "database.mdc").is_file()
+        assert "cloud-sql" in (dest / "components" / "console" / "infra" / "main.tf").read_text()
+        assert "postgres:16" in (dest / "README.md").read_text()
         assert not (dest / ".cursor" / "rules" / "worker.mdc").exists()

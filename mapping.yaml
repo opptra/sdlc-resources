@@ -54,3 +54,4 @@ rules:
   job: rules/source/job.md
   worker: rules/source/worker.md
   config: rules/source/config.md
+  database: rules/source/database.md

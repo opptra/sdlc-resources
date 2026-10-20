@@ -38,6 +38,9 @@ Nits:
 - A pull request that mixes product code with workflow, `infra/`, or `service.yaml` changes. Ask for a split.
 - A Terraform plan that destroys a database, a service account, or a Cloud Run service, unless the pull request says that is the point.
 - Staging configured to read a secret whose id ends in `_PROD`.
+- A database password, connection string, or `DATABASE_URL` committed in the diff.
+- A migration that is not in the same pull request as the code that needs it.
+- Alembic, or any schema change, aimed at the production instance from a laptop.
 
 ## Stay quiet
 

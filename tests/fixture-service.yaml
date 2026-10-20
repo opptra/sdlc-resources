@@ -6,6 +6,7 @@ components:
   - name: console
     archetype: cloud-run-service
     auth: iap
+    database: postgres
     parts: [ui, api]
   - name: nightly
     archetype: cloud-run-job

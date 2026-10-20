@@ -19,6 +19,16 @@ resource "google_cloud_run_v2_service" "app" {
   template {
     service_account = google_service_account.runtime.email
 
+    dynamic "volumes" {
+      for_each = var.cloud_sql_instance == null ? [] : [var.cloud_sql_instance]
+      content {
+        name = "cloudsql"
+        cloud_sql_instance {
+          instances = [volumes.value]
+        }
+      }
+    }
+
     scaling {
       min_instance_count = 0
       max_instance_count = 10
@@ -47,8 +57,24 @@ resource "google_cloud_run_v2_service" "app" {
         name  = "SERVICE_NAME"
         value = var.name
       }
+
+      dynamic "volume_mounts" {
+        for_each = var.cloud_sql_instance == null ? [] : [var.cloud_sql_instance]
+        content {
+          name       = "cloudsql"
+          mount_path = "/cloudsql"
+        }
+      }
     }
   }
+}
+
+resource "google_project_iam_member" "cloudsql" {
+  count = var.cloud_sql_instance == null ? 0 : 1
+
+  project = var.project_id
+  role    = "roles/cloudsql.client"
+  member  = "serviceAccount:${google_service_account.runtime.email}"
 }
 
 resource "google_cloud_run_v2_service_iam_member" "public" {

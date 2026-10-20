@@ -19,6 +19,7 @@ GLOBS = {
     "job": "backend/**/*.py",
     "worker": "backend/**/*.py",
     "config": "README.md",
+    "database": "backend/**/*.py",
 }
 
 
