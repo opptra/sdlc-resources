@@ -6,10 +6,15 @@ import sys
 
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
+        service = (
+            os.environ.get("K_SERVICE")
+            or os.environ.get("CLOUD_RUN_JOB")
+            or os.environ.get("SERVICE_NAME", "app")
+        )
         payload: dict[str, str] = {
             "severity": record.levelname,
             "message": record.getMessage(),
-            "service": os.environ.get("K_SERVICE", os.environ.get("SERVICE_NAME", "app")),
+            "service": service,
             "environment": os.environ.get("APP_ENV", "local"),
         }
         if record.exc_info:

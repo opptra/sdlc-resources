@@ -6,6 +6,5 @@ mapping.yaml @opptra/platform
 modules/ @opptra/platform
 scripts/ @opptra/platform
 skeletons/ @opptra/platform
-skills/ @opptra/platform
 rules/ @opptra/platform
 dobby/ @opptra/platform

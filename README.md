@@ -1,8 +1,8 @@
-# opptra/sdlc
+# opptra/sdlc-resources
 
-The standard for how an Opptra app is set up, reviewed, and deployed.
+The standard for how an Opptra app is set up, aligned, changed, reviewed, and deployed.
 
-`service.yaml` holds the facts: production project, region, and components. [mapping.yaml](mapping.yaml) decides the files, the CI, the deploy, and the agent rules. [scripts/generate.py](scripts/generate.py) applies that decision once. People do not hand-copy a hardcoded pipeline.
+`service.yaml` holds the facts: production project, region, workloads/components, capabilities, and any `unmet` platform gaps. [mapping.yaml](mapping.yaml) decides the files, the CI, the deploy, and the agent rules. [scripts/sdlc.py](scripts/sdlc.py) and [scripts/generate.py](scripts/generate.py) apply that decision in phases (`check`, `status`, `init-runtime`, `add-data`, `add-tests`, `sync-infra`). People do not hand-copy a hardcoded pipeline.
 
 ## Branches
 
@@ -16,22 +16,28 @@ A merge into `production` deploys `prod_project` from `service.yaml`.
 
 | Path | Who it is for |
 |---|---|
-| [skills/create-app/SKILL.md](skills/create-app/SKILL.md) | The agent that scaffolds a new app |
-| [skills/feature/SKILL.md](skills/feature/SKILL.md) | A Linear feature |
-| [skills/bug/SKILL.md](skills/bug/SKILL.md) | A Linear bug |
-| [docs/new-app.md](docs/new-app.md) | A person creating the GitHub repo |
-| [docs/feature.md](docs/feature.md) | A person reviewing a feature |
-| [docs/bug.md](docs/bug.md) | A person reviewing a bug |
+| `opptra/agent-skills` (`create-app`, `change-app`, `align-app`, `feature`, `bug`) | The agent skills that drive the SDLC |
+| [scripts/sdlc.py](scripts/sdlc.py) | Phase CLI (`check`, `status`, `init-runtime`, `add-data`, `add-tests`, `sync-infra`) |
+| [docs/new-app.md](docs/new-app.md) | Creating a new app |
+| [docs/align.md](docs/align.md) | Aligning an existing repository |
+| [docs/feature.md](docs/feature.md) | Reviewing a feature |
+| [docs/bug.md](docs/bug.md) | Reviewing a bug |
 | [docs/gcp-bootstrap.md](docs/gcp-bootstrap.md) | The one-time GCP setup |
 
-Apps Script is not generated. If a description fits none of the archetypes, the create-app skill says so and stops.
+Apps Script is not generated. When a request includes needs outside the current catalog, the skill scaffolds all supported parts and records the gap under `unmet` with a recommendation.
 
 ## What the generator derives
 
-| Facts in a component | Result |
+| Facts | Result |
 |---|---|
-| `ui` and `api` | FastAPI, Vite, a passing `/api/health` test, Python CI, frontend CI, Terraform plan, Cloud Run deploy |
-| `api` | The same without the UI or frontend CI |
-| `job` | A Python entrypoint, a passing test, Python CI, a deploy that updates the job and does not run it |
-| `worker` | A worker, a passing test, Python CI, an image push that does not restart the VM |
+| `ui` and `api` (`staff-dashboard`) | FastAPI, Vite, passing `/api/health` and UI tests, Python CI, frontend CI, Terraform plan, Cloud Run deploy |
+| `api` (`http-api`) | The same without the UI or frontend CI |
+| `job` / `scheduled-jobs` | One image, one or many Cloud Run Jobs with per-job commands and Cloud Scheduler crons (enabled jobs only), optional `shared-secret` webhook receiver, passing runner tests |
+| `worker` | A long-running VM worker, structured logging, a passing test, Python CI, an image push that does not restart the VM |
 | `config` | A README and a CI check. No deploy |
+| `database: postgres` | Cloud SQL Postgres 16, SQLAlchemy + Alembic (`db.py`), Secret Manager password, IAM |
+| `database: firestore` | Default Firestore Native DB IAM, `firestore_state.py` (lease locks, heartbeats, idempotency, generation pointers) |
+| `bucket: private` | Private GCS bucket (`<project>-<name>-assets`), uniform access, storage helper |
+| `queue` | Cloud Tasks queue and enqueuer IAM |
+| `secrets` | Secret Manager secret shells (no values in repo/state) and accessor IAM |
+| `alerts` | Log-based alert policy for failed job runs / unhandled `severity>=ERROR` logs |

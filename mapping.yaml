@@ -1,6 +1,27 @@
-version: 1
+version: 2
 repo: opptra/sdlc-resources
 ref: main
+presets:
+  staff-dashboard:
+    archetype: cloud-run-service
+    auth: iap
+    parts: [ui, api]
+  http-api:
+    archetype: cloud-run-service
+    auth: app-login
+    parts: [api]
+  scheduled-jobs:
+    archetype: scheduled-jobs
+    auth: none
+    parts: [job]
+  worker:
+    archetype: vm-worker
+    auth: none
+    parts: [worker]
+  config:
+    archetype: config-only
+    auth: none
+    parts: [config]
 parts:
   api:
     skeleton: skeletons/api
@@ -24,6 +45,35 @@ parts:
     skeleton: skeletons/config
     capabilities: [config-ci]
     rules: [config]
+cloud_capabilities:
+  postgres:
+    terraform_module: cloud-sql
+    rules: [database, terraform]
+    packages: [sqlalchemy>=2.0, alembic>=1.14, psycopg[binary]>=3.2]
+  firestore:
+    terraform_module: firestore
+    rules: [firestore, terraform]
+    packages: [google-cloud-firestore>=2.19]
+  bucket:
+    terraform_module: bucket
+    rules: [terraform]
+    packages: [google-cloud-storage>=2.18]
+  queue:
+    terraform_module: queue
+    rules: [terraform]
+    packages: [google-cloud-tasks>=2.16]
+  schedule:
+    terraform_module: schedule
+    rules: [job, terraform]
+    packages: []
+  secrets:
+    terraform_module: secrets
+    rules: [terraform]
+    packages: [google-cloud-secret-manager>=2.21]
+  alerts:
+    terraform_module: alerts
+    rules: [terraform]
+    packages: []
 capabilities:
   python-ci:
     workflow: python-ci.yml
@@ -33,6 +83,9 @@ capabilities:
     directory: frontend
   config-ci:
     workflow: config-ci.yml
+    directory: repo
+  sdlc-check:
+    workflow: sdlc-check.yml
     directory: repo
   terraform-plan:
     workflow: terraform-plan.yml
@@ -55,3 +108,4 @@ rules:
   worker: rules/source/worker.md
   config: rules/source/config.md
   database: rules/source/database.md
+  firestore: rules/source/firestore.md

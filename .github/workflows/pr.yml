@@ -14,13 +14,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Generator tests
+      - name: Generator and phase CLI tests
         run: |
           python3 - << 'PY'
           import tests.test_generate as t
           t.test_manifest_ok()
           t.test_apps_script_is_rejected()
           t.test_generate_selects_capabilities()
+          t.test_scheduled_jobs_firestore_webhook_and_unmet()
           PY
       - uses: hashicorp/setup-terraform@v3
         with:

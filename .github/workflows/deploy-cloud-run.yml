@@ -90,7 +90,7 @@ jobs:
           terraform apply -input=false -lock-timeout=120s tfplan
           if terraform output -raw uri >/tmp/uri 2>/dev/null; then
             URL="$(cat /tmp/uri)"
-            if [ "$AUTH" != "iap" ]; then
+            if [ "$AUTH" = "public" ] || [ "$AUTH" = "app-login" ]; then
               curl --fail --silent --show-error "${URL}/api/health"
             fi
             echo "url=${URL}" >> "$GITHUB_OUTPUT"

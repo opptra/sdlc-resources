@@ -10,7 +10,7 @@ variable "region" {
 
 variable "name" {
   type        = string
-  description = "Cloud Run service name. Same value as service.yaml name."
+  description = "Cloud Run service name."
 }
 
 variable "environment" {
@@ -25,11 +25,11 @@ variable "environment" {
 
 variable "auth" {
   type        = string
-  description = "app-login, iap, or public. Same value as service.yaml auth."
+  description = "app-login, iap, public, or shared-secret. Same value as service.yaml auth."
 
   validation {
-    condition     = contains(["app-login", "iap", "public"], var.auth)
-    error_message = "auth must be app-login, iap, or public."
+    condition     = contains(["app-login", "iap", "public", "shared-secret"], var.auth)
+    error_message = "auth must be app-login, iap, public, or shared-secret."
   }
 }
 
@@ -42,4 +42,16 @@ variable "cloud_sql_instance" {
   type        = string
   default     = null
   description = "Cloud SQL connection name. Null when this service has no database."
+}
+
+variable "db_secret_id" {
+  type        = string
+  default     = null
+  description = "Secret Manager secret ID holding the database password."
+}
+
+variable "command" {
+  type        = list(string)
+  default     = []
+  description = "Optional command override for the container."
 }

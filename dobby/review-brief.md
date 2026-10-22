@@ -12,7 +12,7 @@ Dobby does not approve, and does not request changes for a nit.
 <five lines or fewer on what changed>
 
 Risk: <low | needs a human>
-Touches: <none | workflows, service.yaml, auth, billing, finance, migrations, secrets>
+Touches: <none | workflows, service.yaml, config/jobs.yaml, auth, billing, finance, migrations, secrets>
 CI: <green | red | still running>
 
 Look at:
@@ -27,7 +27,7 @@ Nits:
 - <or "None.">
 ```
 
-`needs a human` is required when the diff touches `.github/workflows`, `infra/`, `service.yaml`, auth, billing, finance, migrations, a secret, a deploy script, or an image tag that is not a git SHA. Also when the Terraform plan comment contains a destroy. Production deploys only from a pull request into the production branch.
+`needs a human` is required when the diff touches `.github/workflows`, `infra/`, `service.yaml`, `config/jobs.yaml`, auth, billing, finance, migrations, a secret, a deploy script, or an image tag that is not a git SHA. Also when the Terraform plan comment contains a destroy. Production deploys only from a pull request into the production branch.
 
 ## Blocking, not a nit
 
@@ -35,8 +35,10 @@ Nits:
 - A script whose default target is a production project.
 - A deploy that uses a floating tag such as `latest`.
 - CI lint or tests failing.
-- A pull request that mixes product code with workflow, `infra/`, or `service.yaml` changes. Ask for a split.
-- A Terraform plan that destroys a database, a service account, or a Cloud Run service, unless the pull request says that is the point.
+- A pull request that mixes product code with workflow, `infra/`, `config/jobs.yaml` schedule, or `service.yaml` changes. Ask for a split via `change-app`.
+- A Terraform plan that destroys a database, a bucket, a service account, or a Cloud Run service, unless the pull request says that is the point.
+- A second Firestore database resource instead of the project `(default)` database.
+- A scheduled job handler that catches HTTP 429/5xx or upstream fetch failure and exits 0.
 - Staging configured to read a secret whose id ends in `_PROD`.
 - A database password, connection string, or `DATABASE_URL` committed in the diff.
 - A migration that is not in the same pull request as the code that needs it.
