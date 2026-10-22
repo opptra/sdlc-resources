@@ -47,6 +47,18 @@
             "type": "string",
             "enum": ["service", "job", "worker", "site", "config"]
           },
+          "region": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "frontend_path": {
+            "type": "string",
+            "minLength": 1
+          },
           "auth": {
             "type": "string",
             "enum": ["app-login", "iap", "public", "shared-secret", "none"]
@@ -87,6 +99,7 @@
       "properties": {
         "postgres": { "type": ["boolean", "object", "string"] },
         "firestore": { "type": ["boolean", "object", "string"] },
+        "bigquery": { "type": ["boolean", "object", "string"] },
         "bucket": { "type": ["boolean", "object", "string"] },
         "queue": { "type": ["boolean", "object", "string"] },
         "schedule": { "type": ["boolean", "object", "string"] },
@@ -135,6 +148,21 @@
               "config-only"
             ]
           },
+          "region": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Optional per-component GCP region override (defaults to top-level region)."
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Optional working directory for Python/backend code in existing repositories (defaults to components/<name>)."
+          },
+          "frontend_path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Optional working directory for UI code in existing repositories (defaults to components/<name>/frontend)."
+          },
           "auth": {
             "type": "string",
             "enum": ["app-login", "iap", "public", "shared-secret", "none"]
@@ -149,8 +177,11 @@
           },
           "database": {
             "type": "string",
-            "enum": ["postgres", "firestore", "none"],
-            "description": "postgres adds Cloud SQL. firestore adds default Firestore IAM. Omit or use none when the component does not store data."
+            "enum": ["postgres", "firestore", "bigquery", "none"],
+            "description": "postgres adds Cloud SQL. firestore adds default Firestore IAM. bigquery adds BigQuery rules/client. Omit or use none when the component does not store data."
+          },
+          "bigquery": {
+            "type": "boolean"
           },
           "bucket": {
             "type": "string",

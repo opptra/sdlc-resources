@@ -54,6 +54,9 @@ cloud_capabilities:
     terraform_module: firestore
     rules: [firestore, terraform]
     packages: [google-cloud-firestore>=2.19]
+  bigquery:
+    rules: [bigquery]
+    packages: [google-cloud-bigquery>=3.25]
   bucket:
     terraform_module: bucket
     rules: [terraform]
@@ -109,3 +112,4 @@ rules:
   config: rules/source/config.md
   database: rules/source/database.md
   firestore: rules/source/firestore.md
+  bigquery: rules/source/bigquery.md

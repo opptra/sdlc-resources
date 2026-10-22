@@ -57,9 +57,13 @@ PRESET_DEFAULTS = {
 ALLOWED_COMPONENT_KEYS = {
     "name",
     "archetype",
+    "region",
+    "path",
+    "frontend_path",
     "auth",
     "parts",
     "database",
+    "bigquery",
     "bucket",
     "queue",
     "secrets",
@@ -71,6 +75,7 @@ ALLOWED_COMPONENT_KEYS = {
 ALLOWED_CAPABILITIES = {
     "postgres",
     "firestore",
+    "bigquery",
     "bucket",
     "queue",
     "schedule",
@@ -82,14 +87,14 @@ ALLOWED_CAPABILITIES = {
 def normalize(raw: dict) -> dict:
     """Return a copy of manifest data where preset/workloads/capabilities are expanded into components."""
     data = copy.deepcopy(raw)
+    default_region = str(data.get("region", "asia-south1"))
     if "components" in data and isinstance(data["components"], list):
         for comp in data["components"]:
             if not isinstance(comp, dict):
                 continue
-            _normalize_component_fields(comp)
+            _normalize_component_fields(comp, default_region)
         return data
 
-    # Expand from workloads and/or preset + capabilities
     app_name = str(data.get("name", "app"))
     comp_name = str(data.get("image") or app_name)[:40].rstrip("-")
     caps = data.get("capabilities") if isinstance(data.get("capabilities"), dict) else {}
@@ -101,6 +106,10 @@ def normalize(raw: dict) -> dict:
         database = "postgres"
     elif caps.get("firestore"):
         database = "firestore"
+    elif caps.get("bigquery"):
+        database = "bigquery"
+
+    has_bigquery = bool(caps.get("bigquery", False))
 
     bucket = "none"
     if caps.get("bucket"):
@@ -135,20 +144,38 @@ def normalize(raw: dict) -> dict:
 
         components: list[dict] = []
         if job_items:
-            archetype = "scheduled-jobs" if (len(job_items) > 1 or service_items or caps.get("schedule") or any(j.get("schedules") for j in job_items)) else "cloud-run-job"
+            archetype = (
+                "scheduled-jobs"
+                if (
+                    len(job_items) > 1
+                    or service_items
+                    or caps.get("schedule")
+                    or any(j.get("schedules") for j in job_items)
+                )
+                else "cloud-run-job"
+            )
             comp: dict = {
-                "name": comp_name if len(job_items) > 1 or service_items else str(job_items[0].get("name", comp_name)),
+                "name": comp_name
+                if len(job_items) > 1 or service_items
+                else str(job_items[0].get("name", comp_name)),
                 "archetype": archetype,
+                "region": str(job_items[0].get("region", default_region)),
                 "auth": "none",
                 "parts": ["job"],
                 "database": database,
+                "bigquery": has_bigquery,
                 "bucket": bucket,
                 "secrets": secrets,
                 "alerts": alerts,
                 "jobs": [
                     {
                         "name": str(j["name"]),
-                        "command": str(j.get("command", f"python -m app.jobs.{str(j['name']).replace('-', '_')}")),
+                        "command": str(
+                            j.get(
+                                "command",
+                                f"python -m app.jobs.{str(j['name']).replace('-', '_')}",
+                            )
+                        ),
                         "enabled": bool(j.get("enabled", True)),
                         "timezone": str(j.get("timezone", "Asia/Kolkata")),
                         "schedules": list(j.get("schedules", [])),
@@ -159,6 +186,8 @@ def normalize(raw: dict) -> dict:
                     for j in job_items
                 ],
             }
+            if job_items[0].get("path"):
+                comp["path"] = str(job_items[0]["path"])
             if queue:
                 comp["queue"] = queue
             if service_items:
@@ -166,13 +195,18 @@ def normalize(raw: dict) -> dict:
                 comp["receiver"] = {
                     "name": str(svc.get("name", f"{app_name}-webhook")),
                     "auth": str(svc.get("auth", "shared-secret")),
-                    "command": str(svc.get("command", "uvicorn app.receiver:app --app-dir backend --host 0.0.0.0 --port 8080")),
+                    "command": str(
+                        svc.get(
+                            "command",
+                            "uvicorn app.receiver:app --app-dir backend --host 0.0.0.0 --port 8080",
+                        )
+                    ),
                 }
                 if queue:
                     comp["receiver"]["queue"] = queue
                 if svc.get("secrets"):
                     comp["receiver"]["secrets"] = list(svc["secrets"])
-            _normalize_component_fields(comp)
+            _normalize_component_fields(comp, default_region)
             components.append(comp)
         else:
             for svc in service_items:
@@ -180,38 +214,51 @@ def normalize(raw: dict) -> dict:
                 comp = {
                     "name": str(svc.get("name", comp_name)),
                     "archetype": "cloud-run-service",
-                    "auth": str(svc.get("auth", "iap" if svc.get("run") == "site" else "app-login")),
+                    "region": str(svc.get("region", default_region)),
+                    "auth": str(
+                        svc.get("auth", "iap" if svc.get("run") == "site" else "app-login")
+                    ),
                     "parts": parts,
                     "database": database,
+                    "bigquery": has_bigquery,
                     "bucket": bucket,
                     "secrets": list(svc.get("secrets", secrets)),
                     "alerts": alerts,
                 }
+                if svc.get("path"):
+                    comp["path"] = str(svc["path"])
+                if svc.get("frontend_path"):
+                    comp["frontend_path"] = str(svc["frontend_path"])
                 if queue:
                     comp["queue"] = queue
-                _normalize_component_fields(comp)
+                _normalize_component_fields(comp, default_region)
                 components.append(comp)
         for wrk in worker_items:
             comp = {
                 "name": str(wrk.get("name", comp_name)),
                 "archetype": "vm-worker",
+                "region": str(wrk.get("region", default_region)),
                 "auth": "none",
                 "parts": ["worker"],
                 "database": database,
+                "bigquery": has_bigquery,
                 "bucket": bucket,
                 "secrets": list(wrk.get("secrets", secrets)),
                 "alerts": alerts,
             }
-            _normalize_component_fields(comp)
+            if wrk.get("path"):
+                comp["path"] = str(wrk["path"])
+            _normalize_component_fields(comp, default_region)
             components.append(comp)
         for cfg in config_items:
             comp = {
                 "name": str(cfg.get("name", comp_name)),
                 "archetype": "config-only",
+                "region": default_region,
                 "auth": "none",
                 "parts": ["config"],
             }
-            _normalize_component_fields(comp)
+            _normalize_component_fields(comp, default_region)
             components.append(comp)
         if components:
             data["components"] = components
@@ -222,22 +269,26 @@ def normalize(raw: dict) -> dict:
         comp = {
             "name": comp_name,
             "archetype": spec["archetype"],
+            "region": default_region,
             "auth": spec["auth"],
             "parts": list(spec["parts"]),
             "database": database,
+            "bigquery": has_bigquery,
             "bucket": bucket,
             "secrets": secrets,
             "alerts": alerts,
         }
         if queue:
             comp["queue"] = queue
-        _normalize_component_fields(comp)
+        _normalize_component_fields(comp, default_region)
         data["components"] = [comp]
     return data
 
 
-def _normalize_component_fields(comp: dict) -> None:
+def _normalize_component_fields(comp: dict, default_region: str = "asia-south1") -> None:
+    comp.setdefault("region", default_region)
     comp.setdefault("database", "none")
+    comp.setdefault("bigquery", comp.get("database") == "bigquery")
     comp.setdefault("bucket", "none")
     comp.setdefault("secrets", [])
     comp.setdefault("alerts", False)
@@ -341,7 +392,9 @@ def check(data: dict) -> list[str]:
             continue
         extra_c = sorted(set(component) - ALLOWED_COMPONENT_KEYS)
         if extra_c:
-            errors.append(f"{component.get('name', 'component')}: unknown fields: {', '.join(extra_c)}")
+            errors.append(
+                f"{component.get('name', 'component')}: unknown fields: {', '.join(extra_c)}"
+            )
         cname = str(component.get("name", ""))
         if COMPONENT.fullmatch(cname) is None:
             errors.append(f"component name {cname!r} is not a lowercase slug")
@@ -363,7 +416,9 @@ def check(data: dict) -> list[str]:
             continue
         part_set = set(parts)
         if not rule["required"] <= part_set:
-            errors.append(f"{cname}: {archetype} requires {', '.join(sorted(rule['required']))}")
+            errors.append(
+                f"{cname}: {archetype} requires {', '.join(sorted(rule['required']))}"
+            )
         if not part_set <= rule["parts"]:
             errors.append(f"{cname}: parts {sorted(part_set)} do not fit {archetype}")
         if component.get("auth") not in rule["auth"]:
@@ -372,13 +427,15 @@ def check(data: dict) -> list[str]:
                 f"Use one of: {', '.join(sorted(rule['auth']))}."
             )
         database = component.get("database", "none")
-        if database not in {"postgres", "firestore", "none"}:
-            errors.append(f"{cname}: database must be postgres, firestore, or none")
+        if database not in {"postgres", "firestore", "bigquery", "none"}:
+            errors.append(
+                f"{cname}: database must be postgres, firestore, bigquery, or none"
+            )
         bucket = component.get("bucket", "none")
         if bucket not in {"private", "none"}:
             errors.append(f"{cname}: bucket must be private or none")
         if archetype == "config-only":
-            if database != "none":
+            if database != "none" or component.get("bigquery"):
                 errors.append(f"{cname}: config-only cannot use a database")
             if bucket != "none":
                 errors.append(f"{cname}: config-only cannot use a bucket")
@@ -396,11 +453,17 @@ def check(data: dict) -> list[str]:
             else:
                 rname = str(receiver.get("name", ""))
                 if COMPONENT.fullmatch(rname) is None:
-                    errors.append(f"{cname}: receiver name {rname!r} is not a lowercase slug")
+                    errors.append(
+                        f"{cname}: receiver name {rname!r} is not a lowercase slug"
+                    )
                 if receiver.get("auth") not in {"shared-secret", "public", "iap"}:
-                    errors.append(f"{cname}: receiver auth must be shared-secret, public, or iap")
+                    errors.append(
+                        f"{cname}: receiver auth must be shared-secret, public, or iap"
+                    )
                 if receiver.get("queue") and COMPONENT.fullmatch(str(receiver["queue"])) is None:
-                    errors.append(f"{cname}: receiver queue {receiver['queue']!r} is not a lowercase slug")
+                    errors.append(
+                        f"{cname}: receiver queue {receiver['queue']!r} is not a lowercase slug"
+                    )
 
         jobs = component.get("jobs")
         if archetype == "scheduled-jobs" and (not isinstance(jobs, list) or not jobs):
@@ -416,7 +479,9 @@ def check(data: dict) -> list[str]:
                         continue
                     jname = str(job.get("name", ""))
                     if JOB_NAME.fullmatch(jname) is None:
-                        errors.append(f"{cname}: job name {jname!r} is not a lowercase slug")
+                        errors.append(
+                            f"{cname}: job name {jname!r} is not a lowercase slug"
+                        )
                     if jname in seen_jobs:
                         errors.append(f"{cname}: duplicate job {jname}")
                     seen_jobs.add(jname)
@@ -429,7 +494,9 @@ def check(data: dict) -> list[str]:
                         errors.append(f"{cname}.{jname}: schedules must be a list")
                     for sec in job.get("secrets", []):
                         if SECRET_ID.fullmatch(str(sec)) is None:
-                            errors.append(f"{cname}.{jname}: secret id {sec!r} is not a lowercase slug")
+                            errors.append(
+                                f"{cname}.{jname}: secret id {sec!r} is not a lowercase slug"
+                            )
     return errors
 
 

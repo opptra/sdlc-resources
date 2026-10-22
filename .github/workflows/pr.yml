@@ -22,6 +22,7 @@ jobs:
           t.test_apps_script_is_rejected()
           t.test_generate_selects_capabilities()
           t.test_scheduled_jobs_firestore_webhook_and_unmet()
+          t.test_align_multi_region_custom_paths_and_product_contract()
           PY
       - uses: hashicorp/setup-terraform@v3
         with:
