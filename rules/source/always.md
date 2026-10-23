@@ -6,6 +6,8 @@ A direct push to staging deploys the staging project. Any developer may push the
 
 Do not add deploy.sh. Do not run gcloud run deploy. Do not commit a .env or a credential. Do not tag an image latest.
 
+Prefix every external resource created in GCP or outside the repository—Cloud Run services and jobs, Cloud Scheduler entries, Cloud Tasks queues, Secret Manager secrets, Cloud Storage buckets, Cloud SQL instances, service accounts, and alert policies—with the app's `prefix` (or `name`) from `service.yaml` (`<prefix>-<resource>`). Never create unprefixed generic names such as `smtp`, `webhook`, `alerts`, or `default` in a shared GCP project.
+
 Product code and changes to infra, .github/workflows, config/jobs.yaml schedules, or service.yaml go in separate pull requests. Use the change-app skill when adding or modifying a capability, workload, or schedule.
 
 When the user asks for a change and does not name a skill, decide and follow one. A broken or incorrect behavior follows the bug skill. New product behavior follows the feature skill. Adding a database, bucket, queue, job, or schedule follows the change-app skill. Do not wait for /feature, /bug, or /change-app.

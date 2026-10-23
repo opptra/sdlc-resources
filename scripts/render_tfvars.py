@@ -50,8 +50,12 @@ def main(argv: list[str] | None = None) -> int:
 
     project = args.staging_project if args.environment == "staging" else str(manifest["prod_project"])
     app_name = str(manifest.get("app_name") or manifest["name"])
+    prefix = str(manifest.get("prefix") or app_name)
     comp_name = str(manifest["name"])
-    resource_name = comp_name if comp_name.startswith(app_name) else f"{app_name}-{comp_name}"
+    if comp_name.startswith(f"{prefix}-") or comp_name.startswith(f"{app_name}-") or comp_name in {prefix, app_name}:
+        resource_name = comp_name
+    else:
+        resource_name = f"{prefix}-{comp_name}"
     resource_name = resource_name[:48].rstrip("-")
 
     image = (

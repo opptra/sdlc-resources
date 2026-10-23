@@ -153,22 +153,23 @@ unmet:
 
         assert 'module "service"' in main_tf
         assert "modules/cloud-run-job" in main_tf
-        assert '"report-daily"' in main_tf
-        assert '"belkin"' in main_tf
+        assert '"cx-automation-report-daily"' in main_tf
+        assert '"cx-automation-belkin"' in main_tf
         assert 'module "firestore"' in main_tf
         assert 'module "bucket"' in main_tf
         assert 'module "queue"' in main_tf
         assert 'module "secrets"' in main_tf
+        assert '"cx-automation-freshdesk-opptra"' in main_tf
         assert 'module "schedule"' in main_tf
         assert 'module "receiver"' in main_tf
         assert 'module "alerts"' in main_tf
         assert "cloud-sql" not in main_tf
 
         sched_section = main_tf.split('module "schedule"')[1].split('module "receiver"')[0]
-        assert '"report-daily"' in sched_section
-        assert '"report-daily-2"' in sched_section
+        assert '"cx-automation-report-daily"' in sched_section
+        assert '"cx-automation-report-daily-2"' in sched_section
         assert '"0 7,14 * * *"' in sched_section
-        assert '"belkin"' not in sched_section
+        assert "belkin" not in sched_section
 
         assert (comp_dir / "backend" / "app" / "firestore_state.py").is_file()
         assert (comp_dir / "backend" / "tests" / "test_firestore_state.py").is_file()

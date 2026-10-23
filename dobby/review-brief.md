@@ -38,6 +38,7 @@ Nits:
 - A pull request that mixes product code with workflow, `infra/`, `config/jobs.yaml` schedule, or `service.yaml` changes. Ask for a split via `change-app`.
 - A Terraform plan that destroys a database, a bucket, a service account, or a Cloud Run service, unless the pull request says that is the point.
 - A second Firestore database resource instead of the project `(default)` database.
+- An external GCP resource (Cloud Run service/job, Scheduler job, Cloud Tasks queue, Secret Manager secret, bucket, or service account) that is not prefixed with the app's `prefix` or `name` from `service.yaml`.
 - A scheduled job handler that catches HTTP 429/5xx or upstream fetch failure and exits 0.
 - Staging configured to read a secret whose id ends in `_PROD`.
 - A database password, connection string, or `DATABASE_URL` committed in the diff.
