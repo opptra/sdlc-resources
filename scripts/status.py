@@ -462,7 +462,7 @@ def inspect_repo(repo_dir: Path) -> dict:
             else ("Transitional" if legacy_deploy else "Missing"),
             "action": "None"
             if (tf_files and not legacy_deploy)
-            else "Generate/import Terraform via `change-app` before retiring legacy scripts",
+            else "Run `/adopt-terraform` to scan deploy scripts, generate `infra/` + `imports.tf.example`, and retire legacy scripts",
         },
         {
             "id": 9,
@@ -546,6 +546,18 @@ def inspect_repo(repo_dir: Path) -> dict:
             )
             else "Sync README sections while preserving existing architecture notes",
         },
+        {
+            "id": 15,
+            "area": "Local Development & .env.example",
+            "current": f".env.example={(repo_dir / '.env.example').is_file()}, Makefile={(repo_dir / 'Makefile').is_file()}",
+            "target": ".env.example + Makefile (`make setup`, `make dev`, `make test`) + local secret fallback",
+            "status": "Up to the mark"
+            if ((repo_dir / ".env.example").is_file() and (repo_dir / "Makefile").is_file())
+            else "Missing / Partial",
+            "action": "None"
+            if ((repo_dir / ".env.example").is_file() and (repo_dir / "Makefile").is_file())
+            else "Run `sdlc.py sync-infra` to generate `.env.example` and `Makefile` for local runs",
+        },
     ]
 
     aligned = (
@@ -599,6 +611,7 @@ MEANS = {
     12: "This is who can open the app. After it is set, staff use Google sign-in, a webhook checks a shared secret, and jobs stay private.",
     13: "This is how you notice a failure. After it is set, a failed job or a server error sends an alert instead of looking like a quiet success.",
     14: "This is the page a teammate reads first. After it matches the repo, they can run, test, and deploy without guessing.",
+    15: "This lets you run and test on your laptop first. After it is in place, copy `.env.example` to `.env` and run `make setup && make dev` before pushing to staging.",
 }
 
 PILLAR_MEANS = {

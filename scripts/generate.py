@@ -846,7 +846,12 @@ def write_readme(app: dict, components: list[dict], dest: Path) -> None:
             lines.append(f"- **{item['name']}** — {item['need']} Recommendation: {item['suggestion']}")
     lines += ["", "## Run locally", ""]
     if local:
+        lines.append("Copy `.env.example` to `.env`, install dependencies, and start the local runner:")
+        lines.append("")
         lines.append("```bash")
+        lines.append("make setup\nmake dev\nmake test")
+        lines.append("")
+        lines.append("# Component commands:")
         lines.append("\n\n".join(local))
         lines.append("```")
     else:
@@ -893,6 +898,144 @@ def write_readme(app: dict, components: list[dict], dest: Path) -> None:
             if tail:
                 new_text = new_text + "\n" + tail
     readme_path.write_text(new_text)
+
+
+def write_local_dev_files(app: dict, components: list[dict], dest: Path) -> None:
+    all_Runnable = [c for c in components if c.get("archetype") != "config-only"]
+    if not all_Runnable:
+        return
+
+    env_lines = [
+        f"# {STAMP}",
+        "# Copy this file to .env for local development. Never commit .env.",
+        "APP_ENV=local",
+        f"SERVICE_NAME={app['name']}",
+        f"GOOGLE_CLOUD_PROJECT={app['prod_project']}",
+        "DRY_RUN=true",
+    ]
+    has_postgres = any(c.get("database") == "postgres" for c in components)
+    has_firestore = any(c.get("database") == "firestore" for c in components)
+    has_bigquery = any(c.get("database") == "bigquery" or c.get("bigquery") for c in components)
+    has_bucket = any(c.get("bucket") == "private" for c in components)
+    queues = [str(c["queue"]) for c in components if c.get("queue")]
+    has_receiver = any(c.get("receiver") for c in components)
+
+    if has_postgres:
+        env_lines += [
+            "",
+            "# Local Postgres (started by `make dev` or docker-compose.dev.yml)",
+            "DATABASE_URL=postgresql+psycopg://postgres:local@localhost:5432/app",
+        ]
+    if has_firestore:
+        env_lines += [
+            "",
+            "# Firestore (leave blank to use in-memory fake when APP_ENV=local, or set emulator host:port)",
+            "FIRESTORE_EMULATOR_HOST=",
+        ]
+    if has_bigquery:
+        env_lines += [
+            "",
+            "# BigQuery dataset for local queries",
+            "BIGQUERY_PROJECT=opptra-datawarehouse",
+        ]
+    if has_bucket:
+        env_lines += [
+            "",
+            "# Cloud Storage bucket (uses local in-memory/temp fake when APP_ENV=local)",
+            f"GCS_BUCKET_NAME={app['name']}-local-assets",
+        ]
+    if queues:
+        env_lines += [
+            "",
+            "# Cloud Tasks queue",
+            f"CLOUD_TASKS_QUEUE={queues[0]}",
+        ]
+    if has_receiver:
+        env_lines += [
+            "",
+            "# Webhook shared secret for local testing",
+            "WEBHOOK_SECRET=local-dev-secret",
+        ]
+
+    all_secrets: list[str] = []
+    for c in components:
+        for s in c.get("secrets", []):
+            if s not in all_secrets:
+                all_secrets.append(s)
+    if all_secrets:
+        env_lines += [
+            "",
+            "# Secrets declared in service.yaml (read from env locally, Secret Manager in cloud)",
+        ]
+        for s in all_secrets:
+            upper = s.upper().replace("-", "_")
+            env_lines.append(f"SECRET_{upper}=replace-me")
+
+    env_text = "\n".join(env_lines) + "\n"
+    (dest / ".env.example").write_text(env_text)
+    for c in all_Runnable:
+        cdir = component_dir_for(dest, c)
+        if cdir.resolve() != dest.resolve() and cdir.is_dir():
+            (cdir / ".env.example").write_text(env_text)
+
+    if has_postgres and not (dest / "docker-compose.dev.yml").is_file():
+        (dest / "docker-compose.dev.yml").write_text(
+            "services:\n"
+            "  postgres:\n"
+            "    image: postgres:16\n"
+            "    environment:\n"
+            "      POSTGRES_PASSWORD: local\n"
+            "      POSTGRES_DB: app\n"
+            "    ports:\n"
+            '      - "5432:5432"\n'
+        )
+
+    setup_cmds = ["\t@test -f .env || cp .env.example .env"]
+    dev_cmds: list[str] = []
+    test_cmds: list[str] = []
+    if has_postgres:
+        dev_cmds.append("\t@docker compose -f docker-compose.dev.yml up -d postgres 2>/dev/null || true")
+
+    for c in all_Runnable:
+        parts = set(c.get("parts", []))
+        root = str(c.get("path") or f"components/{c['name']}")
+        fe_root = str(
+            c.get("frontend_path") or (f"{root}/frontend" if root != "." else "frontend")
+        )
+        cd_py = f"cd {root} && " if root != "." else ""
+        if parts & {"api", "job", "worker"}:
+            setup_cmds.append(f"\t{cd_py}uv sync")
+            tcmd = f"\t{cd_py}uv run ruff check . && uv run pytest"
+            if tcmd not in test_cmds:
+                test_cmds.append(tcmd)
+        if "ui" in parts:
+            setup_cmds.append(f"\tcd {fe_root} && npm ci")
+            tcmd = f"\tcd {fe_root} && npm run lint && npm run typecheck && npm test --if-present"
+            if tcmd not in test_cmds:
+                test_cmds.append(tcmd)
+        if "api" in parts:
+            dev_cmds.append(
+                f"\t{cd_py}uv run uvicorn app.main:app --app-dir backend --reload --port 8000"
+            )
+        elif "job" in parts or "worker" in parts:
+            cmd = f"\t{cd_py}uv run python -m app.main"
+            if cmd not in dev_cmds:
+                dev_cmds.append(cmd)
+
+    if not (dest / "Makefile").is_file():
+        makefile = (
+            ".PHONY: setup dev test\n\n"
+            "setup:\n"
+            + "\n".join(dict.fromkeys(setup_cmds))
+            + "\n\n"
+            "dev:\n"
+            + ("\n".join(dev_cmds) if dev_cmds else "\t@echo 'Nothing to run'")
+            + "\n\n"
+            "test:\n"
+            + ("\n".join(test_cmds) if test_cmds else "\t@echo 'No tests configured'")
+            + "\n"
+        )
+        (dest / "Makefile").write_text(makefile)
 
 
 def write_bind_script(app: dict, dest: Path) -> None:
@@ -986,6 +1129,7 @@ def phase_init_runtime(manifest_path: Path, dest: Path, overwrite: bool = False)
         if comp_dir.resolve() != dest.resolve():
             copy_skeleton(mapping, component, comp_dir, overwrite=overwrite)
             write_component_manifest(app, component, comp_dir)
+    write_local_dev_files(app, components, dest)
 
 
 def phase_add_data(manifest_path: Path, dest: Path) -> None:
@@ -1022,6 +1166,7 @@ def phase_sync_infra(manifest_path: Path, dest: Path, ci_only: bool = False) -> 
                 write_component_manifest(app, component, comp_dir)
             write_infra(mapping, app, component, comp_dir)
     write_workflows(mapping, components, dest, include_deploy=not ci_only)
+    write_local_dev_files(app, components, dest)
     write_bind_script(app, dest)
     write_readme(app, components, dest)
 
