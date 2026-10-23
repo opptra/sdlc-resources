@@ -12,7 +12,10 @@ Product code and changes to infra, .github/workflows, config/jobs.yaml schedules
 
 When the user asks for a change and does not name a skill, decide and follow one. A broken or incorrect behavior follows the bug skill. New product behavior follows the feature skill. Adding a database, bucket, queue, job, or schedule follows the change-app skill. Do not wait for /feature, /bug, or /change-app.
 
-At the start of a feature, a bug, or an app change, run `python3 scripts/sdlc.py status --check` (when scripts/sdlc.py is present) and read the Linear issue. If Linear is not connected, stop. Tell the developer to connect Linear in Cursor or Claude. The ticket id is required for the branch name, the commit message, and the pull request. Do not invent a ticket id.
+Plan with the user before creating a Linear issue. Do not create a new Linear ticket on every prompt while still discussing or refining the plan. Check the current Git branch (`feat/<ticket-id>-...`, `fix/<ticket-id>-...`, `infra/<ticket-id>-...`) and `.sdlc/state.yaml` first:
+- If a ticket branch is already checked out and the new ask is related to that same ticket, reuse that Linear issue, append the new requirements and OpenSpec updates to the existing Linear issue, and implement on the current branch.
+- If a ticket branch is checked out and it is unclear whether the new ask belongs to that ticket or is a separate task, ask the user whether to add it to the existing Linear issue or switch to `main` and create/use a new Linear issue.
+- If on `main` with no ticket ID given, agree on the overall plan with the user first, then create one Linear issue and push the agreed requirements, acceptance criteria, and OpenSpec summary to that Linear issue. Do not invent a ticket id.
 
 Branch names are feat/<ticket-id>-<short-slug> for a feature, fix/<ticket-id>-<short-slug> for a bug, and infra/<ticket-id>-<short-slug> for a capability or schedule change.
 
@@ -20,8 +23,10 @@ Commit messages are feat: <ticket-id> <short summary> or fix: <ticket-id> <short
 
 Every pull request links the Linear issue.
 
-A feature writes an OpenSpec under openspec/ before any product code. The pull request includes that path. A bug writes an OpenSpec only when the fix needs a product or design choice.
+A feature writes an OpenSpec under openspec/ before any product code and syncs the spec summary to the Linear issue. The pull request includes that path. A bug writes an OpenSpec only when the fix needs a product or design choice.
 
-Before you edit files, tell the developer what you will change and wait for a yes. Before a commit, show the message and the file list and wait. Before a push or a pull request, show the branch, title, and body and wait. Do not commit or push in the same turn as the code unless they already agreed.
+Before you edit files, tell the developer what you will change and wait for a yes. Before a commit, run `.githooks/pre-commit` and `make ci`, show the message and the file list, and wait. Before a push or a pull request, show the branch, title, and body and wait. Never pass `--no-verify` to `git commit` or `git push`.
 
-Done means the test command for each part you touched has been run.
+During `create-app` or `align-app`, run `.githooks/pre-commit` and `make ci` after generating files. Fix any auto-resolvable lint, formatting, or wiring errors automatically. If a check fails due to something that cannot be resolved without user input, explain the exact failure and ask the user whether to provide the input or disable that specific check (`run_tests: false` or `run_lint: false`) in `service.yaml`.
+
+Done means `.githooks/pre-commit`, `make ci`, and the test command for each part you touched have been run and passed.

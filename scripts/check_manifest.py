@@ -79,6 +79,8 @@ ALLOWED_COMPONENT_KEYS = {
     "queue",
     "secrets",
     "alerts",
+    "run_tests",
+    "run_lint",
     "receiver",
     "jobs",
 }
@@ -303,6 +305,8 @@ def _normalize_component_fields(comp: dict, default_region: str = "asia-south1")
     comp.setdefault("bucket", "none")
     comp.setdefault("secrets", [])
     comp.setdefault("alerts", False)
+    comp.setdefault("run_tests", True)
+    comp.setdefault("run_lint", True)
     if comp.get("receiver") and isinstance(comp["receiver"], dict):
         recv = comp["receiver"]
         if recv.get("queue") and not comp.get("queue"):

@@ -205,6 +205,14 @@
           "alerts": {
             "type": "boolean"
           },
+          "run_tests": {
+            "type": "boolean",
+            "description": "Set to false only when legacy tests cannot run without external inputs and the developer chose to disable them temporarily."
+          },
+          "run_lint": {
+            "type": "boolean",
+            "description": "Set to false only when legacy lint checks cannot pass without user input and the developer chose to disable them temporarily."
+          },
           "receiver": {
             "type": "object",
             "additionalProperties": false,

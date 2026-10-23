@@ -184,6 +184,9 @@ unmet:
         assert (dest / ".env.example").is_file()
         assert "SECRET_FRESHDESK_OPPTRA=replace-me" in (dest / ".env.example").read_text()
         assert (dest / "Makefile").is_file()
+        assert "ci:" in (dest / "Makefile").read_text()
+        assert (dest / ".githooks" / "pre-commit").is_file()
+        assert (dest / ".githooks" / "pre-push").is_file()
         assert (comp_dir / "backend" / "app" / "config.py").is_file()
         readme = (dest / "README.md").read_text()
         assert "Platform gaps and recommendations" in readme
@@ -198,7 +201,7 @@ unmet:
         )
         report = json.loads(res.stdout)
         assert report["aligned"] is True
-        assert len(report["sections_14"]) == 16
+        assert len(report["sections_14"]) == 17
         assert len(report["rule_pillars_5"]) == 10
         assert "firestore" in report["detected"]["capabilities_in_deps"]
 
@@ -208,7 +211,7 @@ unmet:
             capture_output=True,
             text=True,
         )
-        assert "Table A: 16-Point SDLC Scorecard" in table_res.stdout
+        assert "Table A: 17-Point SDLC Scorecard" in table_res.stdout
         assert "Table B: Section 5 Breakdown" in table_res.stdout
 
         test_runner = (

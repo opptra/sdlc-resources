@@ -657,6 +657,8 @@ def write_workflows(mapping: dict, components: list[dict], dest: Path, include_d
                     seen_ci_targets.add(target_key)
                     if path == ".":
                         job_id = capability.replace("_", "-")
+                    if capability == "python-ci" and component.get("run_tests") is False:
+                        args = {**args, "run_tests": "false"}
                     ci_jobs.append((job_id, spec["workflow"], args))
     repo = mapping["repo"]
     write_gate(
@@ -1002,9 +1004,16 @@ def write_local_dev_files(app: dict, components: list[dict], dest: Path) -> None
             '      - "5432:5432"\n'
         )
 
-    setup_cmds = ["\t@test -f .env || cp .env.example .env"]
+    setup_cmds = [
+        "\t@test -f .env || cp .env.example .env",
+        "\t@if [ -d .git ]; then git config core.hooksPath .githooks; fi",
+    ]
     dev_cmds: list[str] = []
     test_cmds: list[str] = []
+    ci_cmds: list[str] = [
+        "\t@test -f service.yaml && test -f README.md && test -f AGENTS.md && test -f CLAUDE.md",
+        '\t@grep -q "sdlc-rules-version:" AGENTS.md',
+    ]
     if has_postgres:
         dev_cmds.append("\t@docker compose -f docker-compose.dev.yml up -d postgres 2>/dev/null || true")
 
@@ -1015,16 +1024,34 @@ def write_local_dev_files(app: dict, components: list[dict], dest: Path) -> None
             c.get("frontend_path") or (f"{root}/frontend" if root != "." else "frontend")
         )
         cd_py = f"cd {root} && " if root != "." else ""
+        run_lint = c.get("run_lint", True) is not False
+        run_tests = c.get("run_tests", True) is not False
         if parts & {"api", "job", "worker"}:
             setup_cmds.append(f"\t{cd_py}uv sync")
-            tcmd = f"\t{cd_py}uv run ruff check . && uv run pytest"
-            if tcmd not in test_cmds:
-                test_cmds.append(tcmd)
+            steps: list[str] = []
+            if run_lint:
+                steps.append("uv run ruff check .")
+            if run_tests:
+                steps.append("uv run pytest")
+            if steps:
+                tcmd = f"\t{cd_py}" + " && ".join(steps)
+                if tcmd not in test_cmds:
+                    test_cmds.append(tcmd)
+                if tcmd not in ci_cmds:
+                    ci_cmds.append(tcmd)
         if "ui" in parts:
             setup_cmds.append(f"\tcd {fe_root} && npm ci")
-            tcmd = f"\tcd {fe_root} && npm run lint && npm run typecheck && npm test --if-present"
-            if tcmd not in test_cmds:
-                test_cmds.append(tcmd)
+            ui_steps: list[str] = []
+            if run_lint:
+                ui_steps.extend(["npm run lint", "npm run typecheck"])
+            if run_tests:
+                ui_steps.append("npm test --if-present")
+            if ui_steps:
+                tcmd = f"\tcd {fe_root} && " + " && ".join(ui_steps)
+                if tcmd not in test_cmds:
+                    test_cmds.append(tcmd)
+                if tcmd not in ci_cmds:
+                    ci_cmds.append(tcmd)
         if "api" in parts:
             dev_cmds.append(
                 f"\t{cd_py}uv run uvicorn app.main:app --app-dir backend --reload --port 8000"
@@ -1034,9 +1061,15 @@ def write_local_dev_files(app: dict, components: list[dict], dest: Path) -> None
             if cmd not in dev_cmds:
                 dev_cmds.append(cmd)
 
-    if not (dest / "Makefile").is_file():
+    ci_cmds.append(
+        "\t@if command -v terraform >/dev/null 2>&1; then terraform fmt -check -recursive; fi"
+    )
+
+    makefile_path = dest / "Makefile"
+    if not makefile_path.is_file() or "setup:" in makefile_path.read_text(errors="ignore"):
         makefile = (
-            ".PHONY: setup dev test\n\n"
+            f"# {STAMP}\n"
+            ".PHONY: setup dev test ci\n\n"
             "setup:\n"
             + "\n".join(dict.fromkeys(setup_cmds))
             + "\n\n"
@@ -1045,9 +1078,79 @@ def write_local_dev_files(app: dict, components: list[dict], dest: Path) -> None
             + "\n\n"
             "test:\n"
             + ("\n".join(test_cmds) if test_cmds else "\t@echo 'No tests configured'")
+            + "\n\n"
+            "ci:\n"
+            + "\n".join(dict.fromkeys(ci_cmds))
             + "\n"
         )
-        (dest / "Makefile").write_text(makefile)
+        makefile_path.write_text(makefile)
+
+
+def write_githooks(dest: Path) -> None:
+    hooks_dir = dest / ".githooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    pre_commit = hooks_dir / "pre-commit"
+    pre_commit.write_text(
+        f"""#!/usr/bin/env bash
+# {STAMP}
+# Fast local pre-commit guard: blocks secret files, direct commits on main/production,
+# and out-of-sync SDLC manifests/rules.
+set -euo pipefail
+
+if git rev-parse --verify HEAD >/dev/null 2>&1; then
+  BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+  if [[ "$BRANCH" == "main" || "$BRANCH" == "production" ]]; then
+    echo "pre-commit: direct commits to '$BRANCH' are blocked. Cut a feat/<ticket>-..., fix/<ticket>-..., or infra/<ticket>-... branch." >&2
+    exit 1
+  fi
+fi
+
+STAGED="$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null || true)"
+for file in $STAGED; do
+  case "$file" in
+    .env|.env.local|.env.production|*.pem|*.key|secrets/*|*credentials*.json|*service-account*.json)
+      echo "pre-commit: blocked staged credential/secret file: $file" >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [ -n "$STAGED" ]; then
+  if git diff --cached -U0 | grep -E '^\\+.*BEGIN (RSA |OPENSSH |EC |PRIVATE )?KEY' >/dev/null 2>&1; then
+    echo "pre-commit: blocked private key header in staged diff." >&2
+    exit 1
+  fi
+fi
+
+test -f service.yaml || {{ echo "pre-commit: missing service.yaml" >&2; exit 1; }}
+test -f AGENTS.md || {{ echo "pre-commit: missing AGENTS.md" >&2; exit 1; }}
+grep -q "sdlc-rules-version:" AGENTS.md || {{ echo "pre-commit: AGENTS.md missing sdlc-rules-version stamp" >&2; exit 1; }}
+"""
+    )
+    pre_commit.chmod(0o755)
+
+    pre_push = hooks_dir / "pre-push"
+    pre_push.write_text(
+        f"""#!/usr/bin/env bash
+# {STAMP}
+# Runs the local CI suite (`make ci`) before pushing to remote.
+set -euo pipefail
+
+if [ -f Makefile ] && grep -q "^ci:" Makefile; then
+  make ci
+fi
+"""
+    )
+    pre_push.chmod(0o755)
+
+    if (dest / ".git").exists():
+        import subprocess
+
+        subprocess.run(
+            ["git", "-C", str(dest), "config", "core.hooksPath", ".githooks"],
+            check=False,
+            capture_output=True,
+        )
 
 
 def write_bind_script(app: dict, dest: Path) -> None:
@@ -1136,6 +1239,7 @@ def phase_init_runtime(manifest_path: Path, dest: Path, overwrite: bool = False)
     if manifest_path.resolve() != (dest / "service.yaml").resolve():
         shutil.copy2(manifest_path, dest / "service.yaml")
     write_repo_hygiene(dest)
+    write_githooks(dest)
     for component in components:
         comp_dir = component_dir_for(dest, component)
         if comp_dir.resolve() != dest.resolve():
@@ -1168,6 +1272,7 @@ def phase_sync_infra(manifest_path: Path, dest: Path, ci_only: bool = False) -> 
     if manifest_path.resolve() != (dest / "service.yaml").resolve():
         shutil.copy2(manifest_path, dest / "service.yaml")
     write_repo_hygiene(dest)
+    write_githooks(dest)
     _, rules = selected(mapping, components)
     write_bundle(dest, rules)
     if not ci_only:
