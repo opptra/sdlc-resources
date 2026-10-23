@@ -542,6 +542,11 @@ provider "google" {
                     f"    }}"
                 )
         sched_block = "{\n" + "\n".join(sched_entries) + "\n  }" if sched_entries else "{}"
+        sched_line = (
+            f"  schedules = {sched_block}"
+            if sched_entries
+            else "  schedules               = {}"
+        )
         blocks.append(
             f"""module "schedule" {{
   source = "git::https://github.com/{repo}.git//modules/schedule?ref={ref}"
@@ -549,7 +554,7 @@ provider "google" {
   project_id              = var.project_id
   region                  = var.region
   runtime_service_account = module.service.runtime_service_account
-  schedules               = {sched_block}
+{sched_line}
 }}"""
         )
 
