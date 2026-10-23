@@ -1,0 +1,21 @@
+name: sdlc-check
+
+on:
+  workflow_call:
+
+jobs:
+  sdlc-check:
+    name: sdlc-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Manifest, rules, and README are synced
+        run: |
+          test -f service.yaml
+          test -f README.md
+          test -f AGENTS.md
+          test -f CLAUDE.md
+          grep -q "sdlc-rules-version:" AGENTS.md
+          if [ -f scripts/sdlc.py ]; then
+            python3 scripts/sdlc.py status --check
+          fi

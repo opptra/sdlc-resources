@@ -7,7 +7,7 @@ on:
         type: string
         default: "3.12"
       working_directory:
-        description: Directory that contains pyproject.toml and backend/
+        description: Directory that contains pyproject.toml and backend/ or tests/
         type: string
         default: "."
       run_tests:
@@ -28,7 +28,7 @@ jobs:
           python-version: ${{ inputs.python_version }}
       - name: Lint
         run: |
-          uv sync --frozen
+          uv sync --frozen || uv sync
           uv run ruff check .
           uv run ruff format --check .
       - name: Test
@@ -39,7 +39,8 @@ jobs:
             echo "pytest skipped"
             exit 0
           fi
-          if [ "$RUN_TESTS" = "auto" ] && [ -z "$(find backend/tests -name 'test_*.py' -print -quit 2>/dev/null)" ]; then
+          FOUND="$(find backend/tests tests -name 'test_*.py' -print -quit 2>/dev/null || true)"
+          if [ "$RUN_TESTS" = "auto" ] && [ -z "$FOUND" ]; then
             echo "pytest skipped; no tests"
             exit 0
           fi

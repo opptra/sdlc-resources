@@ -10,23 +10,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
-
-def parse_manifest(path: Path) -> dict[str, str]:
-    data: dict[str, str] = {}
-    for line_number, raw in enumerate(path.read_text().splitlines(), start=1):
-        line = raw.split("#", 1)[0].strip()
-        if not line:
-            continue
-        if ":" not in line:
-            raise SystemExit(f"{path}:{line_number}: expected key: value")
-        key, value = line.split(":", 1)
-        data[key.strip()] = value.strip().strip("\"'")
-    return data
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from yaml_subset import parse
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--environment", required=True, choices=("staging", "prod"))
@@ -35,43 +26,58 @@ def main() -> int:
     parser.add_argument("--artifact-repo", default="apps")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--github-output", type=Path)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
-    manifest = parse_manifest(args.manifest)
+    manifest = parse(args.manifest.read_text())
     required = ["name", "archetype", "prod_project", "region", "auth"]
     missing = [key for key in required if not manifest.get(key)]
     if missing:
         raise SystemExit(f"{args.manifest} missing: {', '.join(missing)}")
-    if manifest["archetype"] not in {"cloud-run-service", "cloud-run-job", "vm-worker"}:
+    if manifest["archetype"] not in {
+        "cloud-run-service",
+        "cloud-run-job",
+        "scheduled-jobs",
+        "vm-worker",
+    }:
         raise SystemExit(
-            "this workflow applies cloud-run-service, cloud-run-job, or vm-worker, "
+            "this workflow applies cloud-run-service, cloud-run-job, scheduled-jobs, or vm-worker, "
             f"got {manifest['archetype']}"
         )
-    if manifest["auth"] not in {"app-login", "iap", "public", "none"}:
+    if manifest["auth"] not in {"app-login", "iap", "public", "shared-secret", "none"}:
         raise SystemExit(f"unsupported auth {manifest['auth']}")
     if not args.sha or args.sha.startswith("latest"):
         raise SystemExit("sha must be the git commit, not a floating tag")
 
-    project = args.staging_project if args.environment == "staging" else manifest["prod_project"]
+    project = args.staging_project if args.environment == "staging" else str(manifest["prod_project"])
+    app_name = str(manifest.get("app_name") or manifest["name"])
+    comp_name = str(manifest["name"])
+    resource_name = comp_name if comp_name.startswith(app_name) else f"{app_name}-{comp_name}"
+    resource_name = resource_name[:48].rstrip("-")
+
     image = (
         f"{manifest['region']}-docker.pkg.dev/{project}/{args.artifact_repo}/"
-        f"{manifest['name']}:{args.sha}"
+        f"{resource_name}:{args.sha}"
     )
-    payload = {
+    payload: dict = {
         "project_id": project,
-        "region": manifest["region"],
-        "name": manifest["name"],
+        "region": str(manifest["region"]),
+        "name": resource_name,
         "environment": args.environment,
-        "auth": manifest["auth"],
         "image": image,
     }
+    if manifest["archetype"] == "cloud-run-service":
+        payload["auth"] = str(manifest["auth"])
+
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(payload, indent=2) + "\n")
 
     if args.github_output:
         with args.github_output.open("a") as handle:
             for key, value in payload.items():
-                print(f"{key}={value}", file=handle)
+                if isinstance(value, (str, int, bool)):
+                    print(f"{key}={value}", file=handle)
+            if "auth" not in payload:
+                print(f"auth={manifest['auth']}", file=handle)
     print(args.out)
     return 0
 

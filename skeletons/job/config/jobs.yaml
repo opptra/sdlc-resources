@@ -1,0 +1,12 @@
+defaults:
+  region: asia-south1
+  timezone: Asia/Kolkata
+
+jobs:
+  default:
+    enabled: true
+    command: python -m app.main
+    schedules: []
+    timeout_seconds: 1800
+    memory: 1Gi
+    secrets: []

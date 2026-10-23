@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Let one GitHub repository plan and apply Terraform for one app.
 # Usage: scripts/bind-repo.sh <org/repo> <prod-project-id>
-# Creates the CI service account only. Terraform creates the Cloud Run service
+# Creates the CI service account only. Terraform creates the Cloud Run service/jobs
 # and the runtime service account. Requires docs/gcp-bootstrap.md first.
 
 set -euo pipefail
@@ -51,6 +51,11 @@ enable_apis() {
     cloudresourcemanager.googleapis.com \
     iap.googleapis.com \
     storage.googleapis.com \
+    sqladmin.googleapis.com \
+    cloudscheduler.googleapis.com \
+    cloudtasks.googleapis.com \
+    firestore.googleapis.com \
+    monitoring.googleapis.com \
     --project="$project"
 }
 
@@ -100,6 +105,13 @@ bind_deployer() {
   grant_project_role "$project" "$deployer" roles/artifactregistry.writer
   grant_project_role "$project" "$deployer" roles/iam.serviceAccountAdmin
   grant_project_role "$project" "$deployer" roles/iam.serviceAccountUser
+  grant_project_role "$project" "$deployer" roles/resourcemanager.projectIamAdmin
+  grant_project_role "$project" "$deployer" roles/secretmanager.admin
+  grant_project_role "$project" "$deployer" roles/cloudsql.admin
+  grant_project_role "$project" "$deployer" roles/cloudscheduler.admin
+  grant_project_role "$project" "$deployer" roles/cloudtasks.admin
+  grant_project_role "$project" "$deployer" roles/storage.admin
+  grant_project_role "$project" "$deployer" roles/monitoring.alertPolicyEditor
 
   gcloud storage buckets add-iam-policy-binding "gs://${bucket}" \
     --member="serviceAccount:${deployer}" \
