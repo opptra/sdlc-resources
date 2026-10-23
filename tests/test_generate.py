@@ -74,6 +74,10 @@ def test_generate_selects_capabilities() -> None:
         assert (dest / ".gitignore").is_file()
         assert (dest / "openspec").is_dir()
         assert (dest / ".github" / "CODEOWNERS").is_file()
+        bind = (dest / "scripts" / "bind-repo.sh").read_text()
+        assert 'REPO="${1:-opptra/example-app}"' in bind
+        assert 'PROD_PROJECT="${2:-opptra-applications}"' in bind
+        assert "does not protect branches" in bind
         agents = (dest / "AGENTS.md").read_text()
         assert "sdlc-rules-version: 1" in agents
         assert "feat: <ticket-id>" in agents

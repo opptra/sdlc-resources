@@ -2,7 +2,7 @@
 
 The skills `create-app`, `feature`, and `bug` are already on each developer's machine. They come from `opptra/skills`, installed once. Those skills pull `opptra/sdlc` when they need the generator. Nobody keeps a checkout of `opptra/sdlc`.
 
-`main` is the default branch and does not deploy. A push to `staging` deploys staging. A merge into `production` deploys production.
+`main` is the default branch and does not deploy. A direct push to `staging` deploys staging. Developers push there without a pull request. `main` is not merged into `staging`. A pull request from `main` into `production` deploys production.
 
 ## Prerequisites
 
@@ -48,7 +48,7 @@ flowchart TD
   G --> H[Dobby posts the review brief]
   H --> I[Developer reviews spec and code, approves, squash-merges]
   I --> J["Commit on main: feat: TICKET summary. main does not deploy"]
-  J --> K[Developer pushes main onto staging]
+  J --> K[Developer pushes the feature branch directly to staging]
   K --> L[GitHub builds the image, pushes it, applies Terraform in the staging project]
   L --> M[Developer opens the staging URL]
   M --> N[Developer opens a pull request from main into production]
@@ -72,9 +72,9 @@ flowchart TD
   G --> H[GitHub runs CI and the plan. Dobby comments. Nothing deploys]
   H --> I[Developer approves and squash-merges]
   I --> J["Commit on main: fix: TICKET summary"]
-  J --> K[Developer pushes main onto staging and checks the URL]
-  K --> L[Developer merges main into production]
+  J --> K[Developer pushes the fix branch directly to staging and checks the URL]
+  K --> L[Developer opens a pull request from main into production]
   L --> M[Production deploys. Developer moves the issue to Done]
 ```
 
-A production bug uses this same path. It does not skip staging. A rollback is a revert onto `main`, then the same push to `staging` and merge to `production`. It is not a button that redeploys an older image.
+A production bug uses this same path. Staging is a direct push, not a merge from `main`. A rollback is a revert merged to `main`, then a pull request into `production`. The revert branch can also be pushed straight to `staging`. It is not a button that redeploys an older image.

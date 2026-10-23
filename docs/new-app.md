@@ -12,5 +12,5 @@ The developer creates the GitHub repository. The agent scaffolds it in five phas
    - Phase 3 (`add-data`): Installs the database/storage/queue/secret packages and customizes the state or schema helpers.
    - Phase 4 (`add-tests`): Sets up the test runner, writes unit tests for the scaffolded entrypoints and invariants, and verifies `ruff` and `pytest` / `npm test` pass.
    - Phase 5 (`sync-infra`): Deterministically generates `infra/`, `.github/workflows/`, `AGENTS.md`, `CLAUDE.md`, `.cursor/rules/*.mdc`, and `README.md`.
-6. The developer pushes `main` and creates `staging` and `production` from `main`.
-7. A platform owner runs `scripts/protect-branches.sh` and `scripts/bind-repo.sh`. Protection covers `main` and `production` only. For an app with Terraform, set `PLAN_CHECK=plan`.
+6. The developer creates an empty GitHub repository and gives the agent the URL. The agent sets `origin` and pushes `main`, `staging`, and `production`.
+7. `scripts/bind-repo.sh` in the app is already filled in with the repository and production project. The developer runs it if they can change IAM. Otherwise they give that file to someone who can. The script lets GitHub Actions apply Terraform. It does not deploy, and it does not protect branches. `main` and `production` are covered by the organization ruleset. `staging` stays open so a push can deploy.

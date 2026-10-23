@@ -30,7 +30,7 @@ When a request includes something the platform does not yet generate, the suppor
 
 `main` is the default branch. A feature branch is cut from `main` and the pull request targets `main`. Merging to `main` does not deploy.
 
-A push of `main` onto `staging` deploys staging. `staging` is not a protected branch. A pull request from `main` into `production` deploys production on merge. One human approves. Dobby reviews every pull request and does not count as that approval.
+A direct push to `staging` deploys staging. `staging` is not a protected branch, so a developer can push there without the `main` review. Do not merge `main` into `staging`. A pull request from `main` into `production` is the only promotion from `main`, and that merge deploys production. One human approves. Dobby reviews every pull request and does not count as that approval.
 
 Product code and changes to `infra/`, `.github/workflows`, `config/jobs.yaml` schedules, or `service.yaml` go in separate pull requests (`feature` / `bug` for product code, `change-app` for capabilities and schedules).
 

@@ -2,7 +2,7 @@ Read the root service.yaml before you change infra, workflows, or deploy setting
 
 main is the default branch. Cut feature branches from main. Open the pull request into main. Merging to main does not deploy.
 
-A push of main onto staging deploys the staging project. A pull request from main into production deploys prod_project when it merges.
+A direct push to staging deploys the staging project. Any developer may push there. Do not merge main into staging to release. Merging to main does not deploy. A pull request from main into production is the only promotion from main, and that merge deploys prod_project.
 
 Do not add deploy.sh. Do not run gcloud run deploy. Do not commit a .env or a credential. Do not tag an image latest.
 

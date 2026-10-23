@@ -8,8 +8,8 @@
 6. The agent runs the test and lint gates for every component touched, then opens one pull request into `main`. The body has the Linear link, the OpenSpec path, the commands it ran, and the risk box.
 7. CI and, when the app has Terraform, the plan run. Dobby comments. The developer reviews the spec and the code together.
 8. The developer squash-merges. The message is `feat: <ticket> <short summary>`. `main` does not deploy.
-9. The developer pushes `main` onto `staging`. That deploys staging. There is no pull request.
-10. The developer opens a pull request from `main` into `production` and merges it. That deploys production.
+9. To try the change in staging, the developer pushes that branch directly to `staging`. That deploys staging. There is no pull request, and `main` is not merged into `staging`.
+10. The developer opens a pull request from `main` into `production` and merges it. That is the only deploy that comes from `main`.
 11. The developer moves the Linear issue to Done.
 
 Product code and changes to `infra/`, workflows, `config/jobs.yaml` schedules, or `service.yaml` are separate pull requests.

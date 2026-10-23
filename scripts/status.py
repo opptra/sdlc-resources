@@ -584,30 +584,63 @@ def inspect_repo(repo_dir: Path) -> dict:
     }
 
 
+MEANS = {
+    1: "This is the list of programs this repo runs. After it is filled in, later changes know which service or job they belong to.",
+    2: "OpenSpec is the design note written before feature code. After it is initialized, a feature starts with a spec instead of jumping straight into code.",
+    3: "Linear is where the ticket id comes from. After it is connected, branch names, commits, and pull requests use that id.",
+    4: "service.yaml is the fact sheet for deploy. After it exists, CI and Terraform are generated from it instead of being edited by hand.",
+    5: "These are the rules the agent follows on the next feature or bug. After they are present, the agent keeps the product rules and uses the standard commit, test, and deploy path.",
+    6: "These are the GitHub checks and deploy jobs. After they match this repo, a pull request runs the real tests and a staging push deploys only what was pushed.",
+    7: "This is how you prove a change. After the test command exists, a bug starts with a failing test and a feature ends with that command passing.",
+    8: "This is how the app reaches the cloud. After Terraform is the deploy path, a direct push to staging updates staging, and only a pull request from main into production updates production.",
+    9: "These are the three branches. After they exist, developers push tries straight to staging, and main is promoted only into production. Organization rules protect main and production.",
+    10: "This keeps passwords out of git. After it is in place, the app reads secret ids from Secret Manager and logs never contain those values.",
+    11: "This is where data lives. After it is declared, the app uses Postgres, Firestore, or BigQuery on purpose and does not invent a second database.",
+    12: "This is who can open the app. After it is set, staff use Google sign-in, a webhook checks a shared secret, and jobs stay private.",
+    13: "This is how you notice a failure. After it is set, a failed job or a server error sends an alert instead of looking like a quiet success.",
+    14: "This is the page a teammate reads first. After it matches the repo, they can run, test, and deploy without guessing.",
+}
+
+PILLAR_MEANS = {
+    "5.1": "New behaviour starts with a test. After this rule is in the repo, the agent writes the test before the code.",
+    "5.2": "Work lands through a pull request into main. After this rule is in the repo, staging is a direct push and main promotes only to production.",
+    "5.3": "Every change names a Linear issue. After this rule is in the repo, the agent stops if Linear is not connected.",
+    "5.4": "A feature writes an OpenSpec first. After this rule is in the repo, product code waits until that spec exists.",
+    "5.5": "Cloud resources are Terraform on GCP. After this rule is in the repo, a laptop deploy script is no longer the way to ship.",
+    "5.6": "GitHub runs the checks. After this rule is in the repo, a pull request must pass ci before it merges.",
+    "5.7": "Logs are JSON and a failed fetch fails the job. After this rule is in the repo, an empty run is not mistaken for success.",
+    "5.8": "Data changes have a safe path. After this rule is in the repo, schema and warehouse loads follow the store this app actually uses.",
+    "5.9": "Secrets and personal data stay out of git and logs. After this rule is in the repo, the agent refuses to commit them.",
+    "5.10": "The product rules already in this repo stay. After alignment, those rules remain under Product contract and the standard rules are added above them.",
+}
+
+
 def render_tables(report: dict) -> str:
     lines = [
         "### Table A: 14-Point SDLC Scorecard",
         "",
-        "| # | Area | Current Setup | Target Standard | Up to the Mark? | Action / Changes to be Done |",
-        "|---|---|---|---|---|---|",
+        "| # | Area | Current Setup | Target Standard | Up to the Mark? | Action / Changes to be Done | What this means for you |",
+        "|---|---|---|---|---|---|---|",
     ]
     for sec in report["sections_14"]:
+        means = MEANS.get(sec["id"], "")
         lines.append(
-            f"| **{sec['id']}** | **{sec['area']}** | {sec['current']} | {sec['target']} | **{sec['status']}** | {sec['action']} |"
+            f"| **{sec['id']}** | **{sec['area']}** | {sec['current']} | {sec['target']} | **{sec['status']}** | {sec['action']} | {means} |"
         )
 
     lines += [
         "",
         "### Table B: Section 5 Breakdown — Agentic Rules (5.1 – 5.10)",
         "",
-        "| Sub-step | Rule Pillar | Current State | Up to the Mark? | Changes to be Done |",
-        "|---|---|---|---|---|",
+        "| Sub-step | Rule Pillar | Current State | Up to the Mark? | Changes to be Done | What this means for you |",
+        "|---|---|---|---|---|---|",
     ]
     for key, pillar in report["rule_pillars_5"].items():
         num = key.split("_", 1)[0]
         mark = "Yes" if pillar["ok"] else "No"
+        means = PILLAR_MEANS.get(num, "")
         lines.append(
-            f"| **{num}** | **{pillar['title']}** | {pillar['current']} | **{mark}** | {pillar['action']} |"
+            f"| **{num}** | **{pillar['title']}** | {pillar['current']} | **{mark}** | {pillar['action']} | {means} |"
         )
     return "\n".join(lines) + "\n"
 

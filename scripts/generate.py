@@ -864,7 +864,7 @@ def write_readme(app: dict, components: list[dict], dest: Path) -> None:
         lines += [
             "`main` does not deploy. CI runs on the pull request.",
             "",
-            "Push `main` onto `staging` to deploy staging. Open the URL the workflow comments.",
+            "Push a branch directly to `staging` to deploy staging. Do not merge `main` into `staging`.",
             "",
             "```bash",
             "git checkout staging",
@@ -873,7 +873,7 @@ def write_readme(app: dict, components: list[dict], dest: Path) -> None:
             "git push",
             "```",
             "",
-            "Then open a pull request from `main` into `production` and merge it. That deploys production.",
+            "Open a pull request from `main` into `production` and merge it. That is the only way `main` deploys, and it deploys production.",
             README_END,
             "",
         ]
@@ -893,6 +893,51 @@ def write_readme(app: dict, components: list[dict], dest: Path) -> None:
             if tail:
                 new_text = new_text + "\n" + tail
     readme_path.write_text(new_text)
+
+
+def write_bind_script(app: dict, dest: Path) -> None:
+    deploys = any(set(c.get("parts", [])) & {"api", "job", "worker"} for c in app["components"])
+    if not deploys:
+        return
+    source = (ROOT / "scripts" / "bind-repo.sh").read_text()
+    repo = f"opptra/{app['name']}"
+    prod = str(app["prod_project"])
+    old = """if [[ $# -ne 2 ]]; then
+  echo "usage: scripts/bind-repo.sh <org/repo> <prod-project-id>" >&2
+  exit 2
+fi
+
+REPO="$1"
+PROD_PROJECT="$2"
+"""
+    new = f"""REPO="${{1:-{repo}}}"
+PROD_PROJECT="${{2:-{prod}}}"
+"""
+    if old not in source:
+        raise SystemExit("scripts/bind-repo.sh no longer matches the generator")
+    header = f"""#!/usr/bin/env bash
+# Filled in for this app from service.yaml. Copied from opptra/sdlc-resources.
+#
+# What this does: lets GitHub Actions for this repository impersonate a deployer
+# service account in {prod} and in opptra-staging. That account can push the
+# image and apply Terraform. Running this script does not deploy the app.
+# A later direct push to staging does that. main is not merged into staging.
+#
+# Run it if you can change IAM in those two projects. Otherwise give this file
+# to someone who can. Branch protection is an organization ruleset. This script
+# does not protect branches.
+#
+# Usage: scripts/bind-repo.sh
+#        scripts/bind-repo.sh <org/repo> <prod-project-id>
+
+"""
+    body = source.replace(old, new, 1)
+    if body.startswith("#!/usr/bin/env bash\n"):
+        body = body.split("\n", 1)[1]
+    script = dest / "scripts" / "bind-repo.sh"
+    script.parent.mkdir(parents=True, exist_ok=True)
+    script.write_text(header + body)
+    script.chmod(0o755)
 
 
 def write_repo_hygiene(dest: Path) -> None:
@@ -977,6 +1022,7 @@ def phase_sync_infra(manifest_path: Path, dest: Path, ci_only: bool = False) -> 
                 write_component_manifest(app, component, comp_dir)
             write_infra(mapping, app, component, comp_dir)
     write_workflows(mapping, components, dest, include_deploy=not ci_only)
+    write_bind_script(app, dest)
     write_readme(app, components, dest)
 
 

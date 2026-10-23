@@ -4,7 +4,7 @@
 2. If the fix needs a product or design choice, follow [feature.md](feature.md).
 3. Otherwise the agent branches from `main` as `fix/<ticket>-<short-slug>`, writes a failing test, then the fix.
 4. The pull request into `main` has the Linear link, the reproduction, and the test name.
-5. The developer squash-merges as `fix: <ticket> <short summary>`, pushes `main` onto `staging`, checks the URL, then merges `main` into `production`.
+5. The developer squash-merges as `fix: <ticket> <short summary>`. To check staging they push the fix branch directly to `staging`. They do not merge `main` into `staging`. Production is a pull request from `main` into `production`.
 6. The issue is Done when production has applied.
 
-A production bug uses this path. A rollback is a revert through `main`, then `staging`, then `production`.
+A production bug uses this path. A rollback is a revert merged to `main`, then a pull request from `main` into `production`. Staging is updated by pushing the revert branch directly to `staging`.

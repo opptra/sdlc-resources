@@ -31,6 +31,50 @@ from generate import (
 from yaml_subset import dump, parse
 
 
+def github_slug(url: str) -> str:
+    text = url.strip()
+    if text.endswith(".git"):
+        text = text[: -len(".git")]
+    if text.startswith("git@github.com:"):
+        text = text.split(":", 1)[1]
+    elif "github.com/" in text:
+        text = text.split("github.com/", 1)[1]
+    text = text.strip("/")
+    if text.count("/") != 1 or " " in text:
+        raise SystemExit("give a GitHub repository URL or org/repo")
+    return text
+
+
+def set_github_repo(dest: Path, url: str) -> str:
+    slug = github_slug(url)
+    state_dir = dest / ".sdlc"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_file = state_dir / "state.yaml"
+    state: dict = {}
+    if state_file.is_file():
+        try:
+            state = parse(state_file.read_text())
+        except SystemExit:
+            state = {}
+    state["github_repo"] = slug
+    state["updated_at"] = int(time.time())
+    state_file.write_text(dump(state))
+    script = dest / "scripts" / "bind-repo.sh"
+    if script.is_file():
+        text = script.read_text()
+        updated = []
+        replaced = False
+        for line in text.splitlines():
+            if line.startswith('REPO="${1:-') and not replaced:
+                updated.append(f'REPO="${{1:-{slug}}}"')
+                replaced = True
+            else:
+                updated.append(line)
+        script.write_text("\n".join(updated) + "\n")
+    print(slug)
+    return slug
+
+
 def record_phase_state(dest: Path, phase: str, manifest_path: Path) -> None:
     state_dir = dest / ".sdlc"
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -66,6 +110,13 @@ def main(argv: list[str] | None = None) -> int:
         return status_mod.main(rest)
     if cmd == "doctor":
         return status_mod.main([*rest, "--table"])
+    if cmd == "set-github-repo":
+        if len(rest) < 1:
+            print("usage: sdlc.py set-github-repo <github-url> [dest]", file=sys.stderr)
+            return 2
+        dest = Path(rest[1]).resolve() if len(rest) > 1 else Path(".").resolve()
+        set_github_repo(dest, rest[0])
+        return 0
 
     parser = argparse.ArgumentParser(prog=f"sdlc.py {cmd}")
     parser.add_argument("manifest", type=Path)

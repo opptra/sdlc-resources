@@ -8,9 +8,9 @@ The standard for how an Opptra app is set up, aligned, changed, reviewed, and de
 
 `main` is the default branch. A feature pull request targets `main`. Merging to `main` does not deploy.
 
-A push to `staging` deploys the shared staging project. `staging` has no pull request.
+A direct push to `staging` deploys the shared staging project. `staging` has no pull request. `main` is not merged into `staging`.
 
-A merge into `production` deploys `prod_project` from `service.yaml`.
+A pull request from `main` into `production` deploys `prod_project` from `service.yaml`.
 
 ## Start here
 
