@@ -198,7 +198,7 @@ unmet:
         )
         report = json.loads(res.stdout)
         assert report["aligned"] is True
-        assert len(report["sections_14"]) == 15
+        assert len(report["sections_14"]) == 16
         assert len(report["rule_pillars_5"]) == 10
         assert "firestore" in report["detected"]["capabilities_in_deps"]
 
@@ -208,7 +208,7 @@ unmet:
             capture_output=True,
             text=True,
         )
-        assert "Table A: 14-Point SDLC Scorecard" in table_res.stdout
+        assert "Table A: 16-Point SDLC Scorecard" in table_res.stdout
         assert "Table B: Section 5 Breakdown" in table_res.stdout
 
         test_runner = (
