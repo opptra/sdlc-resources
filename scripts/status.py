@@ -614,6 +614,30 @@ def inspect_repo(repo_dir: Path) -> dict:
             if prefix_ok
             else f"Prefix {', '.join(unprefixed_items[:5])} with `{manifest_data.get('prefix') or manifest_data.get('name', '<prefix>')}-` in service.yaml and run `sdlc.py sync-infra`",
         },
+        {
+            "id": 17,
+            "area": "Pre-Commit Hooks & Local CI Gate (.githooks + make ci)",
+            "current": (
+                f"pre-commit={(repo_dir / '.githooks/pre-commit').is_file()}, "
+                f"pre-push={(repo_dir / '.githooks/pre-push').is_file()}, "
+                f"make ci={'ci:' in (repo_dir / 'Makefile').read_text(errors='ignore') if (repo_dir / 'Makefile').is_file() else False}"
+            ),
+            "target": ".githooks/pre-commit + .githooks/pre-push + `make ci` verified locally",
+            "status": "Up to the mark"
+            if (
+                (repo_dir / ".githooks/pre-commit").is_file()
+                and (repo_dir / ".githooks/pre-push").is_file()
+                and (repo_dir / "Makefile").is_file()
+                and "ci:" in (repo_dir / "Makefile").read_text(errors="ignore")
+            )
+            else "Missing / Partial",
+            "action": "None"
+            if (
+                (repo_dir / ".githooks/pre-commit").is_file()
+                and (repo_dir / ".githooks/pre-push").is_file()
+            )
+            else "Run `sdlc.py sync-infra` and execute `.githooks/pre-commit` + `make ci`",
+        },
     ]
 
     aligned = (
@@ -669,6 +693,7 @@ MEANS = {
     14: "This is the page a teammate reads first. After it matches the repo, they can run, test, and deploy without guessing.",
     15: "This lets you run and test on your laptop first. After it is in place, copy `.env.example` to `.env` and run `make setup && make dev` before pushing to staging.",
     16: "This ensures every Cloud Run service, job, scheduler entry, queue, secret, and bucket in shared GCP projects starts with your project prefix (`<prefix>-<resource>`) so resources are easy to identify and never collide.",
+    17: "This runs fast secret/branch/manifest checks on `git commit` and runs `make ci` (lint + tests) on `git push` so broken code or secrets never leave your laptop.",
 }
 
 PILLAR_MEANS = {
@@ -687,7 +712,7 @@ PILLAR_MEANS = {
 
 def render_tables(report: dict) -> str:
     lines = [
-        "### Table A: 16-Point SDLC Scorecard",
+        "### Table A: 17-Point SDLC Scorecard",
         "",
         "| # | Area | Current Setup | Target Standard | Up to the Mark? | Action / Changes to be Done | What this means for you |",
         "|---|---|---|---|---|---|---|",
