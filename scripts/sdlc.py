@@ -21,6 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import check_manifest
+import discover_infra
 import status as status_mod
 from generate import (
     phase_add_data,
@@ -110,6 +111,8 @@ def main(argv: list[str] | None = None) -> int:
         return status_mod.main(rest)
     if cmd == "doctor":
         return status_mod.main([*rest, "--table"])
+    if cmd == "discover-infra":
+        return discover_infra.main(rest)
     if cmd == "set-github-repo":
         if len(rest) < 1:
             print("usage: sdlc.py set-github-repo <github-url> [dest]", file=sys.stderr)

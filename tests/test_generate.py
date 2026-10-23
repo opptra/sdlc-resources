@@ -180,9 +180,14 @@ unmet:
 
         assert (dest / ".cursor" / "rules" / "firestore.mdc").is_file()
         assert (dest / ".cursor" / "rules" / "job.mdc").is_file()
+        assert (dest / ".env.example").is_file()
+        assert "SECRET_FRESHDESK_OPPTRA=replace-me" in (dest / ".env.example").read_text()
+        assert (dest / "Makefile").is_file()
+        assert (comp_dir / "backend" / "app" / "config.py").is_file()
         readme = (dest / "README.md").read_text()
         assert "Platform gaps and recommendations" in readme
         assert "budget-alerts" in readme
+        assert "make setup" in readme
 
         res = subprocess.run(
             [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "status", str(dest), "--json", "--check"],
@@ -192,7 +197,7 @@ unmet:
         )
         report = json.loads(res.stdout)
         assert report["aligned"] is True
-        assert len(report["sections_14"]) == 14
+        assert len(report["sections_14"]) == 15
         assert len(report["rule_pillars_5"]) == 10
         assert "firestore" in report["detected"]["capabilities_in_deps"]
 
@@ -299,3 +304,37 @@ components:
             text=True,
         )
         assert res.returncode == 0, res.stderr
+
+        # Test discover-infra and --write-imports
+        (repo / "deploy" / "dashboard").mkdir(parents=True)
+        (repo / "deploy" / "dashboard" / "deploy.sh").write_text(
+            "gcloud run deploy pm-dashboard --region asia-southeast1 "
+            "--no-allow-unauthenticated --set-secrets=TOKEN=dashboard-token:latest\n"
+        )
+        disc_res = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "discover-infra", str(repo), "--table"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert "Terraform Adoption Scorecard" in disc_res.stdout
+        assert "pm-dashboard" in disc_res.stdout
+
+        imp_res = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "sdlc.py"),
+                "discover-infra",
+                str(repo),
+                "--write-imports",
+                str(manifest_path),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert (repo / "infra" / "imports.tf.example").is_file()
+        assert "module.service.google_cloud_run_v2_service.app" in (
+            repo / "infra" / "imports.tf.example"
+        ).read_text()
+        del imp_res
