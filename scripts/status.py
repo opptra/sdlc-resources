@@ -51,6 +51,42 @@ def selected_rules_for_manifest(app: dict) -> list[str]:
     return rules
 
 
+def _check_resource_prefixes(manifest_data: dict, normalized_data: dict, repo_dir: Path) -> tuple[bool, str, list[str]]:
+    if not manifest_data or not normalized_data:
+        return False, "No service.yaml", ["Define prefix and resources in service.yaml"]
+    app_name = str(manifest_data.get("name", ""))
+    prefix = str(manifest_data.get("prefix") or app_name)
+    valid_prefixes = tuple(
+        f"{p}-" for p in dict.fromkeys([prefix, app_name]) if p
+    )
+    unprefixed: list[str] = []
+    for comp in normalized_data.get("components", []):
+        if comp.get("archetype") == "config-only":
+            continue
+        q = comp.get("queue")
+        if q and not str(q).replace("_", "-").startswith(valid_prefixes):
+            unprefixed.append(f"queue:{q}")
+        recv = comp.get("receiver")
+        if isinstance(recv, dict) and recv.get("name"):
+            rname = str(recv["name"]).replace("_", "-")
+            if not rname.startswith(valid_prefixes):
+                unprefixed.append(f"receiver:{recv['name']}")
+        for s in comp.get("secrets", []):
+            sname = str(s).replace("_", "-")
+            if not sname.startswith(valid_prefixes):
+                unprefixed.append(f"secret:{s}")
+        for j in comp.get("jobs", []):
+            jname = str(j.get("name", "")).replace("_", "-")
+            if jname and not jname.startswith(valid_prefixes):
+                unprefixed.append(f"job:{j.get('name')}")
+    if unprefixed:
+        summary = f"prefix='{prefix}'; unprefixed in service.yaml: {', '.join(unprefixed[:6])}" + (
+            f" (+{len(unprefixed) - 6} more)" if len(unprefixed) > 6 else ""
+        )
+        return False, summary, unprefixed
+    return True, f"prefix='{prefix}' applied to all jobs, services, queues, and secrets", []
+
+
 def _git_branches(repo_dir: Path) -> list[str]:
     if not (repo_dir / ".git").exists():
         return []
@@ -342,6 +378,9 @@ def inspect_repo(repo_dir: Path) -> dict:
     branches = _git_branches(repo_dir)
     has_staging = any(b == "staging" or b.endswith("/staging") for b in branches)
     has_production = any(b == "production" or b.endswith("/production") for b in branches)
+    prefix_ok, prefix_summary, unprefixed_items = _check_resource_prefixes(
+        manifest_data, normalized_data, repo_dir
+    )
 
     components_list = normalized_data.get("components", []) if normalized_data else []
     comp_summary = (
@@ -565,6 +604,16 @@ def inspect_repo(repo_dir: Path) -> dict:
             if ((repo_dir / ".env.example").is_file() and (repo_dir / "Makefile").is_file())
             else "Run `sdlc.py sync-infra` to generate `.env.example` and `Makefile` for local runs",
         },
+        {
+            "id": 16,
+            "area": "External Resource Prefixing (<prefix>-<resource>)",
+            "current": prefix_summary,
+            "target": "All external GCP resources (jobs, services, queues, secrets, buckets) prefixed with `<prefix>-`",
+            "status": "Up to the mark" if prefix_ok else "Needs prefixing",
+            "action": "None"
+            if prefix_ok
+            else f"Prefix {', '.join(unprefixed_items[:5])} with `{manifest_data.get('prefix') or manifest_data.get('name', '<prefix>')}-` in service.yaml and run `sdlc.py sync-infra`",
+        },
     ]
 
     aligned = (
@@ -619,6 +668,7 @@ MEANS = {
     13: "This is how you notice a failure. After it is set, a failed job or a server error sends an alert instead of looking like a quiet success.",
     14: "This is the page a teammate reads first. After it matches the repo, they can run, test, and deploy without guessing.",
     15: "This lets you run and test on your laptop first. After it is in place, copy `.env.example` to `.env` and run `make setup && make dev` before pushing to staging.",
+    16: "This ensures every Cloud Run service, job, scheduler entry, queue, secret, and bucket in shared GCP projects starts with your project prefix (`<prefix>-<resource>`) so resources are easy to identify and never collide.",
 }
 
 PILLAR_MEANS = {
@@ -637,7 +687,7 @@ PILLAR_MEANS = {
 
 def render_tables(report: dict) -> str:
     lines = [
-        "### Table A: 14-Point SDLC Scorecard",
+        "### Table A: 16-Point SDLC Scorecard",
         "",
         "| # | Area | Current Setup | Target Standard | Up to the Mark? | Action / Changes to be Done | What this means for you |",
         "|---|---|---|---|---|---|---|",

@@ -162,7 +162,11 @@ def copy_skeleton(mapping: dict, component: dict, dest: Path, overwrite: bool = 
             (jobs_pkg / "__init__.py").write_text("")
         for job in jobs:
             jname = str(job["name"])
-            py_mod = jname.replace("-", "_")
+            cmd_str = str(job.get("command", ""))
+            if cmd_str.startswith("python -m app.jobs."):
+                py_mod = cmd_str.split("python -m app.jobs.", 1)[1].split()[0]
+            else:
+                py_mod = jname.replace("-", "_")
             jobs_map[jname] = {
                 "enabled": bool(job.get("enabled", True)),
                 "command": str(job.get("command", f"python -m app.jobs.{py_mod}")),
