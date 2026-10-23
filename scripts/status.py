@@ -231,16 +231,23 @@ def inspect_repo(repo_dir: Path) -> dict:
             else "Add mandatory OpenSpec before feature code rule",
         },
         "5.5_infra_gcp_terraform": {
-            "title": "Infra (GCP Only, Terraform, No Laptop Deploy)",
+            "title": "Infra (GCP Only, Terraform, Resource Prefix, No Laptop Deploy)",
             "ok": "Do not add deploy.sh" in combined_rules_text
+            and "<prefix>-<resource>" in combined_rules_text
             and "Do not apply Terraform against production from a laptop"
             in combined_rules_text,
-            "current": "Present"
-            if "Do not add deploy.sh" in combined_rules_text
-            else "Missing or uses laptop deploy.sh",
+            "current": "Present (with <prefix>-<resource> rule)"
+            if (
+                "Do not add deploy.sh" in combined_rules_text
+                and "<prefix>-<resource>" in combined_rules_text
+            )
+            else "Missing or outdated resource prefix rule",
             "action": "None"
-            if "Do not add deploy.sh" in combined_rules_text
-            else "Add GCP + Terraform-only rule & retire laptop deploy scripts",
+            if (
+                "Do not add deploy.sh" in combined_rules_text
+                and "<prefix>-<resource>" in combined_rules_text
+            )
+            else "Sync GCP + Terraform + <prefix>-<resource> naming rule",
         },
         "5.6_github_workflows": {
             "title": "GitHub Workflow Guidelines",

@@ -16,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from build_rules import write_bundle
-from check_manifest import check, normalize
+from check_manifest import check, normalize, prefixed_name
 from yaml_subset import dump, parse
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -46,6 +46,7 @@ dist/
 # Environment & secrets
 .env
 .env.*
+!.env.example
 secrets/
 *.pem
 *.key
@@ -328,9 +329,11 @@ def write_component_manifest(app: dict, component: dict, dest: Path) -> None:
         return
     parts = ", ".join(component["parts"])
     comp_region = component.get("region", app["region"])
+    prefix = str(app.get("prefix") or app["name"])
     lines = [
         f"# {STAMP}",
         f"app_name: {app['name']}",
+        f"prefix: {prefix}",
         f"name: {component['name']}",
         f"archetype: {component['archetype']}",
         f"prod_project: {app['prod_project']}",
@@ -359,12 +362,15 @@ def write_infra(mapping: dict, app: dict, component: dict, dest: Path) -> None:
     module = None
     for part in component["parts"]:
         module = mapping["parts"][part].get("terraform_module") or module
+    app_name = str(app["name"])
+    prefix = str(app.get("prefix") or app_name)
     database = component.get("database", "none")
     has_postgres = database == "postgres"
     has_firestore = database == "firestore"
     has_bucket = component.get("bucket", "none") == "private"
-    queue_name = component.get("queue")
-    secrets = list(component.get("secrets", []))
+    raw_queue = component.get("queue")
+    queue_name = prefixed_name(prefix, app_name, str(raw_queue)) if raw_queue else None
+    secrets = [prefixed_name(prefix, app_name, str(s)) for s in component.get("secrets", [])]
     has_alerts = bool(component.get("alerts", False))
     receiver = component.get("receiver")
     jobs = component.get("jobs") or []
@@ -429,7 +435,7 @@ provider "google" {
         if module == "cloud-run-job" and jobs:
             job_entries: list[str] = []
             for j in jobs:
-                jname = str(j["name"])
+                jname = prefixed_name(prefix, app_name, str(j["name"]))
                 cmd_parts = shlex.split(str(j.get("command", "")))
                 enabled = "true" if j.get("enabled", True) else "false"
                 tz = str(j.get("timezone", "Asia/Kolkata"))
@@ -520,7 +526,7 @@ provider "google" {
         for j in jobs:
             if not j.get("enabled", True):
                 continue
-            jname = str(j["name"])
+            jname = prefixed_name(prefix, app_name, str(j["name"]))
             tz = str(j.get("timezone", "Asia/Kolkata"))
             for idx, cron in enumerate(j.get("schedules", [])):
                 skey = jname if idx == 0 else f"{jname}-{idx + 1}"
@@ -544,7 +550,7 @@ provider "google" {
         )
 
     if isinstance(receiver, dict) and module:
-        rname = str(receiver["name"])
+        rname = prefixed_name(prefix, app_name, str(receiver["name"]))
         rauth = str(receiver.get("auth", "shared-secret"))
         rcmd = shlex.split(
             str(
@@ -905,11 +911,13 @@ def write_local_dev_files(app: dict, components: list[dict], dest: Path) -> None
     if not all_Runnable:
         return
 
+    prefix = str(app.get("prefix") or app["name"])
     env_lines = [
         f"# {STAMP}",
         "# Copy this file to .env for local development. Never commit .env.",
         "APP_ENV=local",
         f"SERVICE_NAME={app['name']}",
+        f"RESOURCE_PREFIX={prefix}",
         f"GOOGLE_CLOUD_PROJECT={app['prod_project']}",
         "DRY_RUN=true",
     ]

@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from check_manifest import normalize
+from check_manifest import normalize, prefixed_name
 from yaml_subset import dump, parse
 
 _GCLOUD_SVC_RE = re.compile(
@@ -313,6 +313,7 @@ def write_imports_for_manifest(manifest_path: Path, dest: Path, project_id: str 
     app = normalize(raw)
     prod = project_id or str(app["prod_project"])
     app_name = str(app["name"])
+    prefix = str(app.get("prefix") or app_name)
     written: list[Path] = []
 
     by_infra_dir: dict[Path, list[str]] = {}
@@ -325,8 +326,7 @@ def write_imports_for_manifest(manifest_path: Path, dest: Path, project_id: str 
         infra_dir.mkdir(parents=True, exist_ok=True)
         region = str(comp.get("region", app["region"]))
         cname = str(comp["name"])
-        res_name = cname if cname.startswith(app_name) else f"{app_name}-{cname}"
-        res_name = res_name[:48].rstrip("-")
+        res_name = prefixed_name(prefix, app_name, cname)[:48].rstrip("-")
         sa_id = f"{res_name}-rt"[:28]
 
         blocks = by_infra_dir.setdefault(
@@ -349,13 +349,13 @@ def write_imports_for_manifest(manifest_path: Path, dest: Path, project_id: str 
                 "",
                 "import {",
                 "  to = module.service.google_cloud_run_v2_service.app",
-                f'  id = "projects/{prod}/locations/{region}/services/{cname}"',
+                f'  id = "projects/{prod}/locations/{region}/services/{res_name}"',
                 "}",
             ]
         elif comp["archetype"] in {"cloud-run-job", "scheduled-jobs"}:
             jobs = comp.get("jobs") or [{"name": cname}]
             for j in jobs:
-                jname = str(j["name"])
+                jname = prefixed_name(prefix, app_name, str(j["name"]))
                 slug = jname.replace("_", "-")
                 blocks += [
                     "",
@@ -365,11 +365,12 @@ def write_imports_for_manifest(manifest_path: Path, dest: Path, project_id: str 
                     "}",
                 ]
         for sec in comp.get("secrets", []):
+            psec = prefixed_name(prefix, app_name, str(sec))
             blocks += [
                 "",
                 "import {",
-                f'  to = module.secrets.google_secret_manager_secret.secret["{sec}"]',
-                f'  id = "projects/{prod}/secrets/{sec}"',
+                f'  to = module.secrets.google_secret_manager_secret.secret["{psec}"]',
+                f'  id = "projects/{prod}/secrets/{psec}"',
                 "}",
             ]
     for infra_dir, blocks in by_infra_dir.items():

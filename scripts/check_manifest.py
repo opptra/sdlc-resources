@@ -14,9 +14,20 @@ from yaml_subset import parse
 
 ROOT = Path(__file__).resolve().parents[1]
 NAME = re.compile(r"^[a-z][a-z0-9-]{1,48}$")
+PREFIX = re.compile(r"^[a-z][a-z0-9-]{1,20}$")
 COMPONENT = re.compile(r"^[a-z][a-z0-9-]{1,40}$")
 JOB_NAME = re.compile(r"^[a-z][a-z0-9_-]{1,40}$")
 SECRET_ID = re.compile(r"^[a-z][a-z0-9_-]{1,48}$")
+
+
+def prefixed_name(prefix: str, app_name: str, raw_name: str) -> str:
+    clean = str(raw_name).strip().replace("_", "-")
+    for p in (prefix, app_name):
+        if not p:
+            continue
+        if clean == p or clean.startswith(f"{p}-"):
+            return clean
+    return f"{prefix}-{clean}"
 
 ARCHETYPES = {
     "cloud-run-service": {
@@ -87,6 +98,8 @@ ALLOWED_CAPABILITIES = {
 def normalize(raw: dict) -> dict:
     """Return a copy of manifest data where preset/workloads/capabilities are expanded into components."""
     data = copy.deepcopy(raw)
+    app_name = str(data.get("name", "app"))
+    data.setdefault("prefix", app_name[:20].rstrip("-"))
     default_region = str(data.get("region", "asia-south1"))
     if "components" in data and isinstance(data["components"], list):
         for comp in data["components"]:
@@ -94,8 +107,6 @@ def normalize(raw: dict) -> dict:
                 continue
             _normalize_component_fields(comp, default_region)
         return data
-
-    app_name = str(data.get("name", "app"))
     comp_name = str(data.get("image") or app_name)[:40].rstrip("-")
     caps = data.get("capabilities") if isinstance(data.get("capabilities"), dict) else {}
     workloads = data.get("workloads") if isinstance(data.get("workloads"), list) else []
@@ -326,6 +337,8 @@ def check(data: dict) -> list[str]:
             errors.append(f"missing {key}")
     if data.get("name") and NAME.fullmatch(str(data["name"])) is None:
         errors.append(f"name {data['name']!r} is not a lowercase slug")
+    if data.get("prefix") and PREFIX.fullmatch(str(data["prefix"])) is None:
+        errors.append(f"prefix {data['prefix']!r} is not a lowercase slug (1-20 chars)")
 
     if "preset" in data and data["preset"] not in PRESET_DEFAULTS:
         errors.append(

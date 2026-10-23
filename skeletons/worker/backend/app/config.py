@@ -2,7 +2,7 @@
 
 In local development (`APP_ENV=local`), loads `.env` if present and reads
 `SECRET_<ID>` (or `<ID>`) from environment variables. In `staging` and `prod`,
-reads from environment or GCP Secret Manager.
+reads `<prefix>-<secret_id>` from GCP Secret Manager.
 """
 
 from __future__ import annotations
@@ -29,6 +29,15 @@ def get_env(name: str, default: str = "") -> str:
     return os.environ.get(name, default)
 
 
+def resolve_secret_name(secret_id: str) -> str:
+    load_dotenv()
+    clean = secret_id.strip().replace("_", "-")
+    prefix = os.environ.get("RESOURCE_PREFIX") or os.environ.get("SERVICE_NAME", "")
+    if prefix and not clean.startswith(f"{prefix}-"):
+        return f"{prefix}-{clean}"
+    return clean
+
+
 def get_secret(secret_id: str, default: str = "") -> str:
     load_dotenv()
     upper = secret_id.upper().replace("-", "_")
@@ -43,6 +52,7 @@ def get_secret(secret_id: str, default: str = "") -> str:
     from google.cloud import secretmanager  # type: ignore[import-untyped]
 
     client = secretmanager.SecretManagerServiceClient()
-    resource = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
+    gcp_secret_id = resolve_secret_name(secret_id)
+    resource = f"projects/{project_id}/secrets/{gcp_secret_id}/versions/latest"
     response = client.access_secret_version(request={"name": resource})
     return response.payload.data.decode("utf-8")
