@@ -3,7 +3,7 @@
 
 Subcommands:
   check <service.yaml>                        Validate service.yaml against schema and rules
-  status [repo_dir] [--json|--table|--check]  Inspect repo & render 14-point scorecard
+  status [repo_dir] [--json|--table|--check]  Inspect repo & render 17-point scorecard
   doctor [repo_dir]                           Alias for `status --table`
   init-runtime <service.yaml> [dest]          Phase 2: Scaffold runtime, openspec/, and entrypoints
   add-data <service.yaml> [dest]              Phase 3: Install data/storage/queue/secret packages & helpers

@@ -16,17 +16,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from yaml_subset import parse
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "1"
+VERSION = "2"
 START_MARKER = "<!-- sdlc-rules-start -->"
 END_MARKER = "<!-- sdlc-rules-end -->"
 
 GLOBS = {
     "python": "{**/backend/**/*.py,src/**/*.py,scripts/**/*.py,tests/**/*.py}",
-    "react": "{**/frontend/**/*.{ts,tsx},apps/**/*.{ts,tsx}}",
+    "react": "{components/**/frontend/**/*.{ts,tsx},**/frontend/**/*.{ts,tsx},apps/**/*.{ts,tsx}}",
     "terraform": "**/infra/**",
     "job": "{**/backend/**/*.py,src/**/*.py,scripts/**/*.py}",
     "worker": "{**/backend/**/*.py,src/**/*.py}",
-    "config": "README.md",
+    "config": "{README.md,**/README.md,service.yaml,Dockerfile,**/Dockerfile*,.github/workflows/**}",
     "database": "{**/backend/**/*.py,src/**/*.py}",
     "firestore": "{**/backend/**/*.py,src/**/*.py}",
     "bigquery": "{**/backend/**/*.py,src/**/*.py,scripts/**/*.sql,bq-schema/**/*.sql}",
@@ -81,6 +81,11 @@ def write_bundle(directory: Path, names: list[str]) -> None:
     rules_dir = directory / ".cursor" / "rules"
     rules_dir.mkdir(parents=True, exist_ok=True)
     managed_text, mdc_files = render_bundle(names)
+    known = set(parse((ROOT / "mapping.yaml").read_text())["rules"])
+    keep = {Path(filename).stem for filename in mdc_files}
+    for stale in rules_dir.glob("*.mdc"):
+        if stale.stem in known and stale.stem not in keep:
+            stale.unlink()
     for filename, content in mdc_files.items():
         (rules_dir / filename).write_text(content)
     for doc_name in ("AGENTS.md", "CLAUDE.md"):

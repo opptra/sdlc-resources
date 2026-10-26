@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inspect an existing repository and render the 14-point Opptra SDLC scorecard."""
+"""Inspect an existing repository and render the 17-point Opptra SDLC scorecard."""
 
 from __future__ import annotations
 
@@ -744,7 +744,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("repo", nargs="?", type=Path, default=Path("."))
     parser.add_argument("--json", action="store_true", help="Print JSON report")
-    parser.add_argument("--table", action="store_true", help="Print 14-point Markdown tables")
+    parser.add_argument("--table", action="store_true", help="Print 17-point Markdown tables")
     parser.add_argument("--check", action="store_true", help="Exit non-zero if repo is not aligned")
     args = parser.parse_args(argv)
 

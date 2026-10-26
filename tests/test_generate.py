@@ -79,8 +79,11 @@ def test_generate_selects_capabilities() -> None:
         assert 'PROD_PROJECT="${2:-opptra-applications}"' in bind
         assert "does not protect branches" in bind
         agents = (dest / "AGENTS.md").read_text()
-        assert "sdlc-rules-version: 1" in agents
+        assert "sdlc-rules-version: 2" in agents
         assert "feat: <ticket-id>" in agents
+        assert "infra: <ticket-id>" in agents
+        assert ".sdlc/state.yaml" not in agents
+        assert "Do not log secret values" in agents
         assert (dest / ".cursor" / "rules" / "react.mdc").is_file()
         assert "frontend/**/*.{ts,tsx}" in (dest / ".cursor" / "rules" / "react.mdc").read_text()
         assert (dest / ".cursor" / "rules" / "database.mdc").is_file()
@@ -342,3 +345,23 @@ components:
             repo / "infra" / "imports.tf.example"
         ).read_text()
         del imp_res
+
+
+def test_removed_capability_rule_file_is_deleted() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        dest = Path(tmp)
+        script = str(ROOT / "scripts" / "build_rules.py")
+        subprocess.run(
+            [sys.executable, script, "--dest", str(dest), "--rules", "always", "firestore"],
+            check=True,
+        )
+        rules = dest / ".cursor" / "rules"
+        assert (rules / "firestore.mdc").is_file()
+        (rules / "local.mdc").write_text("keep\n")
+        subprocess.run(
+            [sys.executable, script, "--dest", str(dest), "--rules", "always"],
+            check=True,
+        )
+        assert not (rules / "firestore.mdc").exists()
+        assert (rules / "always.mdc").is_file()
+        assert (rules / "local.mdc").read_text() == "keep\n"

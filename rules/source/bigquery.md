@@ -1,4 +1,4 @@
-BigQuery is the analytical data warehouse (`opptra-datawarehouse` or the project's dataset). Do not use BigQuery as a transactional row-locking store, and do not use Google Sheets as a substitute for a table.
+BigQuery is the analytical warehouse for this component. Use the project and dataset declared for it in `service.yaml`. Do not hardcode a shared warehouse name. Do not use BigQuery as a transactional row-locking store, and do not use Google Sheets as a substitute for a table.
 
 Keep schema changes as checked-in SQL DDL files under `scripts/` or `bq-schema/`. Every load job or pipeline write must be idempotent for its date/window (or append-only with a deduplicating view/query over the newest run).
 

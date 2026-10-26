@@ -954,8 +954,9 @@ def write_local_dev_files(app: dict, components: list[dict], dest: Path) -> None
     if has_bigquery:
         env_lines += [
             "",
-            "# BigQuery dataset for local queries",
-            "BIGQUERY_PROJECT=opptra-datawarehouse",
+            "# BigQuery project and dataset for this component. Leave blank until service.yaml names them. Do not assume a shared warehouse.",
+            "BIGQUERY_PROJECT=",
+            "BIGQUERY_DATASET=",
         ]
     if has_bucket:
         env_lines += [
