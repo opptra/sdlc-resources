@@ -1,3 +1,9 @@
+---
+title: Review
+parent: Platform
+nav_order: 4
+---
+
 # Review
 
 Dobby reviews every pull request. One human approval is what merges it to `staging` or to `main`. Dobby does not count as that approval.

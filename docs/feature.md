@@ -1,3 +1,9 @@
+---
+title: Feature
+parent: Using it
+nav_order: 4
+---
+
 # Feature
 
 1. A person opens a Linear issue with acceptance criteria, or describes the feature and lets the `feature` skill create one issue after the plan is agreed.

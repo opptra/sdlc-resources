@@ -1,0 +1,12 @@
+title: Opptra SDLC
+description: How an Opptra app is set up, aligned, changed, reviewed, and deployed.
+remote_theme: just-the-docs/just-the-docs@v0.10.0
+url: https://opptra.github.io
+baseurl: /sdlc-resources
+search_enabled: true
+heading_anchors: true
+aux_links:
+  Repository: https://github.com/opptra/sdlc-resources
+aux_links_new_tab: true
+back_to_top: true
+back_to_top_text: Back to top

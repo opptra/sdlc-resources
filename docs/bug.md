@@ -1,3 +1,9 @@
+---
+title: Bug
+parent: Using it
+nav_order: 5
+---
+
 # Bug
 
 1. A person opens a Linear issue with the steps, the expected result, the actual result, and whether it was staging or production.

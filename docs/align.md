@@ -1,3 +1,9 @@
+---
+title: Align
+parent: Using it
+nav_order: 6
+---
+
 # Align an existing repository
 
 `align-app` in `opptra/agent-skills` runs `scripts/sdlc.py status --json` against the open repository, compares it with the standard, and presents three sections: **Adopt now**, **Fill capability gaps**, and **Later recommendations**. It applies only the items the developer accepts.

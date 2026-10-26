@@ -1,3 +1,9 @@
+---
+title: Migrate
+parent: Using it
+nav_order: 7
+---
+
 # Migrate an existing repository
 
 The language can stay. The contract is the branches, the required lint check, the agent rules, and deploy through the workflow. Do the steps in order. A later step depends on the earlier one having been used at least once.

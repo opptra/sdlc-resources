@@ -1,3 +1,9 @@
+---
+title: GCP bootstrap
+parent: Platform
+nav_order: 2
+---
+
 # GCP bootstrap
 
 Do this once, before any app deploys through the workflow. The project id in the workflows is the placeholder `opptra-staging`. If the real id differs, change the default input `staging_project` on [deploy-cloud-run.yml](../.github/workflows/deploy-cloud-run.yml) and the default in [scripts/bind-repo.sh](../scripts/bind-repo.sh).

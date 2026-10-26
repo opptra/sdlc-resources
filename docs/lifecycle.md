@@ -1,3 +1,9 @@
+---
+title: Lifecycle
+parent: Using it
+nav_order: 2
+---
+
 # Lifecycle
 
 `main` is the default branch and does not deploy. A direct push to `staging` deploys the shared staging project. `main` is not merged into `staging`. A pull request from `main` into `production` deploys the app's production project.

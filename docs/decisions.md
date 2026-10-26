@@ -1,3 +1,9 @@
+---
+title: Decisions
+parent: Platform
+nav_order: 5
+---
+
 # Decisions
 
 These are the choices this repository implements. Reviewers who want to change one should say so on the pull request.

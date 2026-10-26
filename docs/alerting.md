@@ -1,3 +1,9 @@
+---
+title: Alerts
+parent: Platform
+nav_order: 3
+---
+
 # Alerts
 
 v1 does not create the alert policies. Apply this page after a Cloud Run service is deployed. Use one Slack notification channel per GCP project. Staging alerts go to the staging project's channel. Production alerts go to that app's production project channel.

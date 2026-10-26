@@ -1,3 +1,8 @@
+---
+title: Home
+nav_order: 1
+---
+
 # Opptra SDLC
 
 This is the guide for how an Opptra app is set up, aligned, changed, reviewed, and deployed. The pages here are the same files as `docs/` in [opptra/sdlc-resources](https://github.com/opptra/sdlc-resources). A checkout still opens those files directly. This site is the copy that does not require one.

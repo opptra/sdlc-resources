@@ -1,3 +1,9 @@
+---
+title: Resources
+parent: Platform
+nav_order: 1
+---
+
 # Resources
 
 Git holds the resources an app should have. A Cloud Storage object holds the resources Terraform last created. `terraform plan` prints what an apply would add, change, or destroy. Apply is the only step that changes the project.

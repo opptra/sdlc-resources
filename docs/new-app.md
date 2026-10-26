@@ -1,3 +1,9 @@
+---
+title: New app
+parent: Using it
+nav_order: 3
+---
+
 # New app
 
 The developer creates the GitHub repository. The agent scaffolds it in five phases (`check` → `init-runtime` → `add-data` → `add-tests` → `sync-infra`).

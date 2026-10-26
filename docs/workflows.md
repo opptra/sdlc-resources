@@ -1,3 +1,9 @@
+---
+title: Which skill
+parent: Using it
+nav_order: 1
+---
+
 # How an Opptra app is created, changed, and fixed
 
 The skills are already on each developer's machine. They come from `opptra/agent-skills`, installed once. Those skills clone `opptra/sdlc-resources` `main` when they need the generator and record that commit as `generator_sha` in `.sdlc/state.yaml`. Nobody keeps a checkout of `opptra/sdlc-resources`.

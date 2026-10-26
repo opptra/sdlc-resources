@@ -7,10 +7,15 @@ docs_dir: docs
 theme:
   name: material
   features:
+    - navigation.expand
+    - navigation.sections
+    - navigation.indexes
     - navigation.footer
     - navigation.top
     - content.code.copy
+    - toc.follow
 markdown_extensions:
+  - meta
   - tables
   - pymdownx.superfences:
       custom_fences:
@@ -20,6 +25,7 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Using it:
+      - using-it.md
       - Which skill: workflows.md
       - Lifecycle: lifecycle.md
       - New app: new-app.md
@@ -28,6 +34,7 @@ nav:
       - Align: align.md
       - Migrate: migrating.md
   - Platform:
+      - platform.md
       - Resources: resources.md
       - GCP bootstrap: gcp-bootstrap.md
       - Alerts: alerting.md
