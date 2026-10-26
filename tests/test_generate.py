@@ -150,7 +150,12 @@ unmet:
                 cmd.append(str(dest))
             subprocess.run(cmd, check=True)
 
-        assert (dest / ".sdlc" / "state.yaml").is_file()
+        state_text = (dest / ".sdlc" / "state.yaml").read_text()
+        assert "generator_sha:" in state_text
+        head = subprocess.check_output(
+            ["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True
+        ).strip()
+        assert head in state_text
         comp_dir = dest / "components" / "automation"
         main_tf = (comp_dir / "infra" / "main.tf").read_text()
 

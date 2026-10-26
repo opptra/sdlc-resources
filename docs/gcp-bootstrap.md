@@ -68,7 +68,7 @@ gcloud artifacts repositories create apps \
   --project=opptra-staging \
   --location=asia-south1 \
   --repository-format=docker \
-  --description="App images for opptra/sdlc"
+  --description="App images for opptra/sdlc-resources"
 ```
 
 ## 6. Bind each repository

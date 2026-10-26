@@ -24,6 +24,8 @@ jobs:
           t.test_scheduled_jobs_firestore_webhook_and_unmet()
           t.test_align_multi_region_custom_paths_and_product_contract()
           PY
+      - name: Documentation links
+        run: python3 scripts/docs_site.py check
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.10.5"

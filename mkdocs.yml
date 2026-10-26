@@ -1,0 +1,35 @@
+site_name: Opptra SDLC
+site_description: How an Opptra app is set up, changed, reviewed, and deployed.
+site_url: https://opptra.github.io/sdlc-resources/
+repo_url: https://github.com/opptra/sdlc-resources
+repo_name: opptra/sdlc-resources
+docs_dir: docs
+theme:
+  name: material
+  features:
+    - navigation.footer
+    - navigation.top
+    - content.code.copy
+markdown_extensions:
+  - tables
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+nav:
+  - Home: index.md
+  - Using it:
+      - Which skill: workflows.md
+      - Lifecycle: lifecycle.md
+      - New app: new-app.md
+      - Feature: feature.md
+      - Bug: bug.md
+      - Align: align.md
+      - Migrate: migrating.md
+  - Platform:
+      - Resources: resources.md
+      - GCP bootstrap: gcp-bootstrap.md
+      - Alerts: alerting.md
+      - Review: review.md
+      - Decisions: decisions.md

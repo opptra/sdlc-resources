@@ -15,6 +15,7 @@ Subcommands:
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -76,6 +77,22 @@ def set_github_repo(dest: Path, url: str) -> str:
     return slug
 
 
+def generator_sha() -> str:
+    root = Path(__file__).resolve().parents[1]
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return ""
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
 def record_phase_state(dest: Path, phase: str, manifest_path: Path) -> None:
     state_dir = dest / ".sdlc"
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -92,6 +109,9 @@ def record_phase_state(dest: Path, phase: str, manifest_path: Path) -> None:
     state["manifest"] = str(manifest_path.name)
     state["last_phase"] = phase
     state["completed_phases"] = completed
+    sha = generator_sha()
+    if sha:
+        state["generator_sha"] = sha
     state["updated_at"] = int(time.time())
     state_file.write_text(dump(state))
 

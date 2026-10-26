@@ -7,6 +7,8 @@ node_modules/
 dist/
 *.pyc
 .uv/
+site/
+site-src/
 rules/dist/
 frontend/dist/
 backend/app/static/

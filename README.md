@@ -16,7 +16,8 @@ A pull request from `main` into `production` deploys `prod_project` from `servic
 
 | Path | Who it is for |
 |---|---|
-| `opptra/agent-skills` (`create-app`, `change-app`, `align-app`, `feature`, `bug`) | The agent skills that drive the SDLC |
+| [docs/workflows.md](docs/workflows.md) | Which skill to use. The same pages publish to GitHub Pages from `main`. |
+| `opptra/agent-skills` (`opptra`, `create-app`, `change-app`, `align-app`, `feature`, `bug`) | The agent skills that drive the SDLC |
 | [scripts/sdlc.py](scripts/sdlc.py) | Phase CLI (`check`, `status`, `init-runtime`, `add-data`, `add-tests`, `sync-infra`) |
 | [docs/new-app.md](docs/new-app.md) | Creating a new app |
 | [docs/align.md](docs/align.md) | Aligning an existing repository |
