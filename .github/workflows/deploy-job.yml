@@ -42,8 +42,8 @@ jobs:
           STAGING_PROJECT: ${{ inputs.staging_project }}
           SHA: ${{ github.sha }}
           MANIFEST: ${{ inputs.manifest }}
-          WIF_PROVIDER: ${{ inputs.wif_provider }}
-          WIF_SERVICE_ACCOUNT: ${{ inputs.wif_service_account }}
+          WIF_PROVIDER: ${{ inputs.environment == 'prod' && vars.WIF_PROVIDER_PROD || vars.WIF_PROVIDER_STAGING }}
+          WIF_SERVICE_ACCOUNT: ${{ inputs.environment == 'prod' && vars.WIF_SERVICE_ACCOUNT_PROD || vars.WIF_SERVICE_ACCOUNT_STAGING }}
         run: |
           python3 "$GITHUB_WORKSPACE/scripts/render_tfvars.py" \
             --manifest "$GITHUB_WORKSPACE/$MANIFEST" \
@@ -54,8 +54,8 @@ jobs:
             --github-output "$GITHUB_OUTPUT"
       - uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ inputs.wif_provider }}
-          service_account: ${{ inputs.wif_service_account }}
+          workload_identity_provider: ${{ inputs.environment == 'prod' && vars.WIF_PROVIDER_PROD || vars.WIF_PROVIDER_STAGING }}
+          service_account: ${{ inputs.environment == 'prod' && vars.WIF_SERVICE_ACCOUNT_PROD || vars.WIF_SERVICE_ACCOUNT_STAGING }}
       - uses: google-github-actions/setup-gcloud@v2
       - uses: hashicorp/setup-terraform@v3
         with:
