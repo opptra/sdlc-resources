@@ -1338,7 +1338,12 @@ def write_repo_hygiene(dest: Path) -> None:
     scripts_dir.mkdir(parents=True, exist_ok=True)
     # Deploy workflows check out the app, then run these files from that
     # checkout. They are not read from sdlc-resources at deploy time.
-    for filename in ("render_tfvars.py", "yaml_subset.py", "check_secret_versions.py"):
+    for filename in (
+        "render_tfvars.py",
+        "yaml_subset.py",
+        "check_secret_versions.py",
+        "check_firestore.py",
+    ):
         shutil.copy2(ROOT / "scripts" / filename, scripts_dir / filename)
 
 

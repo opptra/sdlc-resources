@@ -42,7 +42,7 @@ The service module runs first. It creates the Cloud Run jobs or service and the 
 |---|---|
 | `cloud-run-job` or `cloud-run-service` | The workload and `runtime_service_account` |
 | `bucket` | `<project>-<name>-assets`, and object access for that account |
-| `firestore` | Access to the project's existing `(default)` database. It does not create a second database. |
+| `firestore` | Access to the project's `(default)` database. The deploy creates that Native database in the app region when it is missing. The module does not own it. A database in another mode or region stops the deploy. |
 | `queue` | The Cloud Tasks queue named in `service.yaml` |
 | `secrets` | Empty Secret Manager shells. The workload that mounts a shell grants its own account. The deploy creates the shells, stops when a mounted secret has no version, and mounts `latest` on the next run. |
 | `schedule` | A scheduler entry for each enabled cron |

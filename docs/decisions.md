@@ -20,7 +20,7 @@ GCP only. New UI and API go on Cloud Run (`cloud-run-service`). Batch and cron w
 
 Data and platform capabilities are attached per component in `service.yaml`:
 - `database: postgres` — Cloud SQL Postgres 16 with SQLAlchemy and Alembic
-- `database: firestore` — IAM on the project's existing `(default)` Firestore Native database
+- `database: firestore` — IAM on the project's `(default)` Firestore Native database. The deploy creates that database in the app region when it is missing. It does not create a second named database.
 - `bucket: private` — Private Cloud Storage bucket with uniform access
 - `queue` — Cloud Tasks queue
 - `secrets` — Secret Manager secret shells (values are never stored in Git or Terraform state)

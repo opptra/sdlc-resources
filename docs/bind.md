@@ -52,7 +52,7 @@ A checkout of `opptra/sdlc-resources` that was not filled in by the generator ta
 scripts/bind-staging.sh opptra/<repo>
 ```
 
-The script creates `<repo-name>-deployer` in `opptra-staging`, grants it permission to push images and apply Terraform, and lets only the GitHub environment `staging` impersonate it. The apply permission includes Logging Configuration Writer, because a log-based error alert also creates a Logging notification rule. The service-account id must be 6 to 30 characters. A longer repository name fails here.
+The script creates `<repo-name>-deployer` in `opptra-staging`, grants it permission to push images and apply Terraform, and lets only the GitHub environment `staging` impersonate it. The apply permission includes Logging Configuration Writer, because a log-based error alert also creates a Logging notification rule. It includes Datastore Owner so a deploy can create the project's one `(default)` Firestore database when an app uses Firestore and that database is missing. The service-account id must be 6 to 30 characters. A longer repository name fails here.
 
 Both bind scripts require `gh`. Each reads the repository's token name from GitHub and trusts that name. A login that cannot read the repository stops here. When that name differs from the older `repo:<org/repo>:environment:<environment>` form, the script removes the old binding.
 
@@ -82,7 +82,7 @@ scripts/bind-production.sh opptra/<repo> <prod-project-id>
 
 If that production project has no Terraform state bucket yet, they create `gs://<prod-project-id>-tfstate` first. The commands are in [gcp-bootstrap.md](gcp-bootstrap.md). The script checks for the bucket and exits if it is missing. `opptra-staging` and `opptra-applications` already have buckets.
 
-The script creates the deployer in the production project only, and lets only the GitHub environment `production` impersonate it.
+The script creates the deployer in the production project only, and lets only the GitHub environment `production` impersonate it. It grants the same Datastore Owner role so a production deploy can create `(default)` when that project has no Firestore database.
 
 ## Order
 

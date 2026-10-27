@@ -84,7 +84,9 @@ A change to `infra/`, workflows, or `service.yaml` is a `change-app` pull reques
 
 A deploy that mounts secrets creates the Secret Manager shells first. If a mounted secret has no version, the action stops and lists the ids. Add a version in Secret Manager and re-run the workflow. The value is not committed. Cloud Run mounts `latest` on that next run.
 
-That check is `scripts/check_secret_versions.py` in the app repository. The deploy checks out the app, so the file has to be there. `init-runtime` and `sync-infra` copy it from this repository, next to `render_tfvars.py` and `yaml_subset.py`. An app generated before that copy needs one `sync-infra`, then a commit of `scripts/check_secret_versions.py`, before the next deploy.
+Those checks are `scripts/check_secret_versions.py` and `scripts/check_firestore.py` in the app repository. The deploy checks out the app, so the files have to be there. `init-runtime` and `sync-infra` copy them from this repository, next to `render_tfvars.py` and `yaml_subset.py`.
+
+An app with `database: firestore` creates one Native `(default)` database in the app region when the project has none. The next app in that project finds it and does not create another. A database that is not Native, or that is in a different region from `service.yaml`, stops the deploy. The deployer needs `roles/datastore.owner` from `scripts/bind-staging.sh` or `scripts/bind-production.sh`. Terraform only grants the runtime account access, so the database is not stored in an app's state.
 
 ## Bug
 

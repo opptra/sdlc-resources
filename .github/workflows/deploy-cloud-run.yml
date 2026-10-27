@@ -66,11 +66,12 @@ jobs:
         with:
           terraform_version: "1.10.5"
           terraform_wrapper: false
-      - name: Create secret shells and require a version
+      - name: Create secret shells and check the project
         working-directory: ${{ inputs.working_directory }}/infra
         env:
           PROJECT: ${{ steps.manifest.outputs.project_id }}
           NAME: ${{ steps.manifest.outputs.name }}
+          REGION: ${{ steps.manifest.outputs.region }}
         run: |
           set -euo pipefail
           terraform init -input=false \
@@ -82,6 +83,10 @@ jobs:
           fi
           python3 "$GITHUB_WORKSPACE/scripts/check_secret_versions.py" \
             --project "$PROJECT" \
+            --main-tf main.tf
+          python3 "$GITHUB_WORKSPACE/scripts/check_firestore.py" \
+            --project "$PROJECT" \
+            --region "$REGION" \
             --main-tf main.tf
       - name: Build and push
         env:

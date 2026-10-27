@@ -161,6 +161,9 @@ bind_deployer() {
   grant_project_role "$project" "$deployer" roles/monitoring.alertPolicyEditor
   # Log-based alerts also create a Logging notification rule.
   grant_project_role "$project" "$deployer" roles/logging.configWriter
+  # The deploy creates the project's one (default) database when an app uses
+  # Firestore and that database is missing. The job account only gets datastore.user.
+  grant_project_role "$project" "$deployer" roles/datastore.owner
 
   gcloud storage buckets add-iam-policy-binding "gs://${bucket}" \
     --member="serviceAccount:${deployer}" \
