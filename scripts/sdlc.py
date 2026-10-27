@@ -61,8 +61,10 @@ def set_github_repo(dest: Path, url: str) -> str:
     state["github_repo"] = slug
     state["updated_at"] = int(time.time())
     state_file.write_text(dump(state))
-    script = dest / "scripts" / "bind-repo.sh"
-    if script.is_file():
+    for name in ("bind-staging.sh", "bind-production.sh", "bind-repo.sh"):
+        script = dest / "scripts" / name
+        if not script.is_file():
+            continue
         text = script.read_text()
         updated = []
         replaced = False

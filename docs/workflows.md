@@ -27,13 +27,17 @@ A capability change and a product change are two pull requests. `change-app` goe
 
 | What | When | Who sets it up | Where it comes from |
 |---|---|---|---|
-| Staging GCP project, Workload Identity pool, state buckets, Artifact Registry repo `apps`, billing budgets | Once for the company | Platform owner | `docs/gcp-bootstrap.md` in `opptra/sdlc-resources`. The project id in the draft is `opptra-staging`. |
+| Identity project `opptra-sdlc-ci` and the Workload Identity pool `opptra-github` | Once for the company | Platform owner | [gcp-bootstrap.md](gcp-bootstrap.md). The pool already exists. Do not create a second one. |
+| Staging project `opptra-staging`, state buckets, Artifact Registry repo `apps`, billing budgets | Once for the company | Platform owner | [gcp-bootstrap.md](gcp-bootstrap.md). |
 | `opptra/sdlc-resources` on GitHub `main` | Once for the company | Platform owner | This repo. A phase records the commit it ran as `generator_sha`. |
 | `opptra/agent-skills` linked into Cursor and Claude | Once per person | Each developer | The skills repo. `fetch-skill` updates them. The route banner prints that commit. |
 | Linear issue | Every new app, feature, and bug | The person who wants the work | Linear. The issue names users, outcome, production project, and who can sign in. A bug also includes steps, expected result, and actual result. |
 | Empty GitHub repo in `opptra` | Once per app | The developer | GitHub. The agent does not create it. |
 | `main`, `staging`, and `production` branches | Once per app | The developer, after the generator has written the files | `staging` and `production` are created from `main`. |
-| Branch protection and the GitHub deploy identity | Once per app | Platform owner | An organization ruleset protects `main` and `production`. `scripts/bind-repo.sh` creates the deployer account and prints four Actions variables. `staging` is left open so a push can deploy it. |
+| GitHub environments `staging` and `production`, and the four Actions variables | Once per app | Repository admin | [bind.md](bind.md). Add a required reviewer on `production` when the plan allows it. |
+| Staging deployer | Once per app | Developer, when they can change IAM in `opptra-staging` | Run `scripts/bind-staging.sh`, then the two `gh variable set` commands it prints. |
+| Production deployer | Once per app | Someone who can change IAM in `prod_project` | The developer sends them `scripts/bind-production.sh`. They run it and set the two production variables. |
+| Branch protection | Once per app | Platform owner | An organization ruleset protects `main` and `production`. `staging` is left open so a push can deploy it. |
 | Production GCP project | Already exists | Whoever owns that product | Named in the Linear issue and written into `service.yaml` as `prod_project`. |
 
 ## New app
@@ -48,7 +52,7 @@ flowchart TD
   E -->|Yes| G[Skill clones opptra/sdlc-resources main, writes service.yaml, runs the generator]
   G --> H[Folder has code, passing tests, rules, and only the CI and deploy this app needs]
   H --> I[Developer pushes main and creates staging and production from main]
-  I --> J[Platform owner protects main and production and binds GitHub to GCP]
+  I --> J[Admin creates GitHub environments. Developer binds staging. Production bind goes to someone with production IAM]
   J --> K[App is ready. First product change is a feature]
 ```
 

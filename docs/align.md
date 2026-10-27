@@ -18,7 +18,7 @@ Apps Script is unsupported. Report it and leave the repository unchanged.
 - `README.md` with the purpose, local run commands, test commands, any `unmet` platform recommendations, and the deploy steps.
 - A pull-request-only `.github/workflows/ci.yml` calling `opptra/sdlc-resources` at `main`.
 - Branches `main`, `staging`, and `production` when missing. `main` is the default and does not deploy. `staging` stays unprotected. `production` is protected by the organization ruleset, not by a script the developer runs.
-- `scripts/bind-repo.sh` when the app deploys. It is filled in from `service.yaml`. Running it grants GitHub Actions a deployer account. It does not deploy and it does not protect branches.
+- `scripts/bind-staging.sh` and `scripts/bind-production.sh` when the app deploys. They are filled in from `service.yaml`. The developer runs the staging script. They send the production script to someone who can change IAM in `prod_project`. The steps are in [bind.md](bind.md). Running either script grants GitHub Actions a deployer account. It does not deploy and it does not protect branches.
 
 Do not delete the current deploy path during **Adopt now**.
 

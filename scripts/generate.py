@@ -1159,49 +1159,86 @@ fi
         )
 
 
+def _copy_bind_script(filename: str, old: str, new: str, header: str, dest: Path) -> None:
+    source = (ROOT / "scripts" / filename).read_text()
+    if old not in source:
+        raise SystemExit(f"scripts/{filename} no longer matches the generator")
+    body = source.replace(old, new, 1)
+    if body.startswith("#!/usr/bin/env bash\n"):
+        body = body.split("\n", 1)[1]
+    script = dest / "scripts" / filename
+    script.parent.mkdir(parents=True, exist_ok=True)
+    script.write_text(header + body)
+    script.chmod(0o755)
+
+
 def write_bind_script(app: dict, dest: Path) -> None:
     deploys = any(set(c.get("parts", [])) & {"api", "job", "worker"} for c in app["components"])
     if not deploys:
         return
-    source = (ROOT / "scripts" / "bind-repo.sh").read_text()
     repo = f"opptra/{app['name']}"
     prod = str(app["prod_project"])
-    old = """if [[ $# -ne 2 ]]; then
-  echo "usage: scripts/bind-repo.sh <org/repo> <prod-project-id>" >&2
+    _copy_bind_script(
+        "bind-staging.sh",
+        """if [[ $# -ne 1 ]]; then
+  echo "usage: scripts/bind-staging.sh <org/repo>" >&2
+  exit 2
+fi
+
+REPO="$1"
+""",
+        f'REPO="${{1:-{repo}}}"\n',
+        f"""#!/usr/bin/env bash
+# Filled in for this app from service.yaml. Copied from opptra/sdlc-resources.
+#
+# What this does: lets GitHub Actions for this repository impersonate the
+# staging deployer in opptra-staging, through the Workload Identity pool in
+# opptra-sdlc-ci. That account can push the image and apply Terraform in
+# staging. A staging token cannot impersonate the production deployer.
+# Running this script does not deploy. A later direct push to staging does.
+#
+# Run it if you can change IAM in opptra-staging and can read the pool in
+# opptra-sdlc-ci. You do not need access to {prod}.
+# Send scripts/bind-production.sh to someone who can change IAM in {prod}.
+# This script does not protect branches.
+#
+# Usage: scripts/bind-staging.sh
+#        scripts/bind-staging.sh <org/repo>
+
+""",
+        dest,
+    )
+    _copy_bind_script(
+        "bind-production.sh",
+        """if [[ $# -ne 2 ]]; then
+  echo "usage: scripts/bind-production.sh <org/repo> <prod-project-id>" >&2
   exit 2
 fi
 
 REPO="$1"
 PROD_PROJECT="$2"
-"""
-    new = f"""REPO="${{1:-{repo}}}"
+""",
+        f"""REPO="${{1:-{repo}}}"
 PROD_PROJECT="${{2:-{prod}}}"
-"""
-    if old not in source:
-        raise SystemExit("scripts/bind-repo.sh no longer matches the generator")
-    header = f"""#!/usr/bin/env bash
+""",
+        f"""#!/usr/bin/env bash
 # Filled in for this app from service.yaml. Copied from opptra/sdlc-resources.
 #
-# What this does: lets GitHub Actions for this repository impersonate a deployer
-# service account in {prod} and in opptra-staging. That account can push the
-# image and apply Terraform. Running this script does not deploy the app.
-# A later direct push to staging does that. main is not merged into staging.
+# What this does: lets GitHub Actions for this repository impersonate the
+# production deployer in {prod}, through the Workload Identity pool in
+# opptra-sdlc-ci. A production token cannot impersonate the staging deployer.
+# Running this script does not deploy. A merge into production does.
 #
-# Run it if you can change IAM in those two projects. Otherwise give this file
-# to someone who can. Branch protection is an organization ruleset. This script
-# does not protect branches.
+# Run it if you can change IAM in {prod} and can read the pool in
+# opptra-sdlc-ci. You do not need access to opptra-staging.
+# The developer runs scripts/bind-staging.sh. This script does not protect branches.
 #
-# Usage: scripts/bind-repo.sh
-#        scripts/bind-repo.sh <org/repo> <prod-project-id>
+# Usage: scripts/bind-production.sh
+#        scripts/bind-production.sh <org/repo> <prod-project-id>
 
-"""
-    body = source.replace(old, new, 1)
-    if body.startswith("#!/usr/bin/env bash\n"):
-        body = body.split("\n", 1)[1]
-    script = dest / "scripts" / "bind-repo.sh"
-    script.parent.mkdir(parents=True, exist_ok=True)
-    script.write_text(header + body)
-    script.chmod(0o755)
+""",
+        dest,
+    )
 
 
 def write_repo_hygiene(dest: Path) -> None:

@@ -51,7 +51,7 @@ def discover_repo(repo_dir: Path) -> dict:
         for p in list(repo_dir.glob("deploy/**/*.sh"))
         + list(repo_dir.glob("scripts/**/*.sh"))
         + list(repo_dir.glob("*.sh"))
-        if ".venv" not in p.parts and "node_modules" not in p.parts and p.name != "bind-repo.sh"
+        if ".venv" not in p.parts and "node_modules" not in p.parts and p.name not in {"bind-repo.sh", "bind-staging.sh", "bind-production.sh"}
     ]
     dockerfiles = [
         p

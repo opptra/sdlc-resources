@@ -24,6 +24,7 @@ A pull request from `main` into `production` deploys `prod_project` from `servic
 | [docs/feature.md](docs/feature.md) | Reviewing a feature |
 | [docs/bug.md](docs/bug.md) | Reviewing a bug |
 | [docs/gcp-bootstrap.md](docs/gcp-bootstrap.md) | The one-time GCP setup |
+| [docs/bind.md](docs/bind.md) | What to add on GitHub, which bind script you run, and which script to send to someone with production access |
 
 Apps Script is not generated. When a request includes needs outside the current catalog, the skill scaffolds all supported parts and records the gap under `unmet` with a recommendation.
 

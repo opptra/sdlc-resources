@@ -39,7 +39,7 @@ The state object is `gs://<project>-tfstate/<app name>`. Staging state is in the
 
 The state bucket and the Workload Identity pool are created once, before Terraform can run. [gcp-bootstrap.md](gcp-bootstrap.md) is that procedure. Terraform cannot store state in a bucket that does not exist yet.
 
-`scripts/bind-repo.sh` creates the CI service account GitHub authenticates as, and grants it permission to apply and to push images. It does not create the Cloud Run service. The first apply does that.
+`scripts/bind-staging.sh` creates the CI service account GitHub authenticates as in `opptra-staging`. `scripts/bind-production.sh` creates the matching account in `prod_project`. Each grants that account permission to apply and to push images, and lets only that GitHub environment impersonate it. Neither creates the Cloud Run service. The first apply does that. The order is in [bind.md](bind.md).
 
 A Cloud SQL instance is added in the app's `infra/` when the app needs a database, with `lifecycle { prevent_destroy = true }`. Apply then refuses to drop it until someone removes that block in a reviewed change.
 

@@ -1,26 +1,38 @@
 #!/usr/bin/env bash
-# Let one GitHub repository plan and apply Terraform for one app.
-# Usage: scripts/bind-repo.sh <org/repo> <prod-project-id>
-# Creates the CI service account only. Terraform creates the Cloud Run service/jobs
-# and the runtime service account. Requires docs/gcp-bootstrap.md first.
+# Let one GitHub repository plan and apply Terraform in the staging project.
+# Usage: scripts/bind-staging.sh <org/repo>
+# Creates the staging deployer only. Does not deploy and does not touch production.
+# Production is scripts/bind-production.sh. See docs/bind.md.
 
 set -euo pipefail
 
-if [[ $# -ne 2 ]]; then
-  echo "usage: scripts/bind-repo.sh <org/repo> <prod-project-id>" >&2
+if [[ $# -ne 1 ]]; then
+  echo "usage: scripts/bind-staging.sh <org/repo>" >&2
   exit 2
 fi
 
 REPO="$1"
-PROD_PROJECT="$2"
+CI_PROJECT="${CI_PROJECT:-opptra-sdlc-ci}"
 STAGING_PROJECT="${STAGING_PROJECT:-opptra-staging}"
 POOL="${WIF_POOL:-opptra-github}"
 PROVIDER="${WIF_PROVIDER:-github}"
 REGION="${REGION:-asia-south1}"
+ENVIRONMENT="staging"
 NAME="${REPO##*/}"
+ACCOUNT="${NAME}-deployer"
 
 if [[ "$REPO" != */* ]]; then
   echo "repo must look like opptra/finance-ops" >&2
+  exit 2
+fi
+
+if [[ "$STAGING_PROJECT" == "$CI_PROJECT" ]]; then
+  echo "staging project must be a workload project, not ${CI_PROJECT}." >&2
+  exit 2
+fi
+
+if [[ ! "$ACCOUNT" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]]; then
+  echo "service account id ${ACCOUNT} must be 6 to 30 characters. Shorten the GitHub repository name." >&2
   exit 2
 fi
 
@@ -29,16 +41,14 @@ if ! gcloud projects describe "$STAGING_PROJECT" >/dev/null 2>&1; then
   exit 1
 fi
 
-gcloud projects describe "$PROD_PROJECT" >/dev/null
-
 if ! gcloud iam workload-identity-pools describe "$POOL" \
-  --project="$STAGING_PROJECT" --location=global >/dev/null 2>&1; then
-  echo "workload identity pool ${POOL} is missing in ${STAGING_PROJECT}." >&2
+  --project="$CI_PROJECT" --location=global >/dev/null 2>&1; then
+  echo "workload identity pool ${POOL} is missing in ${CI_PROJECT}, or this account cannot read it." >&2
   exit 1
 fi
 
-STAGING_NUMBER="$(gcloud projects describe "$STAGING_PROJECT" --format='value(projectNumber)')"
-MEMBER="principalSet://iam.googleapis.com/projects/${STAGING_NUMBER}/locations/global/workloadIdentityPools/${POOL}/attribute.repository/${REPO}"
+CI_NUMBER="$(gcloud projects describe "$CI_PROJECT" --format='value(projectNumber)')"
+MEMBER="principal://iam.googleapis.com/projects/${CI_NUMBER}/locations/global/workloadIdentityPools/${POOL}/subject/repo:${REPO}:environment:${ENVIRONMENT}"
 
 enable_apis() {
   local project="$1"
@@ -90,9 +100,25 @@ grant_project_role() {
     --quiet >/dev/null
 }
 
+drop_repo_wide_binding() {
+  local project="$1"
+  local deployer="$2"
+  local staging_number old_member
+  staging_number="$(gcloud projects describe "$STAGING_PROJECT" --format='value(projectNumber)' 2>/dev/null || true)"
+  if [[ -z "$staging_number" ]]; then
+    return 0
+  fi
+  old_member="principalSet://iam.googleapis.com/projects/${staging_number}/locations/global/workloadIdentityPools/${POOL}/attribute.repository/${REPO}"
+  gcloud iam service-accounts remove-iam-policy-binding "$deployer" \
+    --project="$project" \
+    --member="$old_member" \
+    --role=roles/iam.workloadIdentityUser \
+    --quiet >/dev/null 2>&1 || true
+}
+
 bind_deployer() {
   local project="$1"
-  local deployer="${NAME}-deployer@${project}.iam.gserviceaccount.com"
+  local deployer="${ACCOUNT}@${project}.iam.gserviceaccount.com"
   local bucket="${project}-tfstate"
 
   if ! gcloud storage buckets describe "gs://${bucket}" >/dev/null 2>&1; then
@@ -100,7 +126,7 @@ bind_deployer() {
     exit 1
   fi
 
-  ensure_sa "$project" "${NAME}-deployer"
+  ensure_sa "$project" "$ACCOUNT"
   grant_project_role "$project" "$deployer" roles/run.admin
   grant_project_role "$project" "$deployer" roles/artifactregistry.writer
   grant_project_role "$project" "$deployer" roles/iam.serviceAccountAdmin
@@ -122,6 +148,7 @@ bind_deployer() {
     --role="roles/storage.legacyBucketReader" \
     --quiet >/dev/null
 
+  drop_repo_wide_binding "$project" "$deployer"
   gcloud iam service-accounts add-iam-policy-binding "$deployer" \
     --project="$project" \
     --member="$MEMBER" \
@@ -130,25 +157,27 @@ bind_deployer() {
 }
 
 enable_apis "$STAGING_PROJECT"
-enable_apis "$PROD_PROJECT"
 ensure_registry "$STAGING_PROJECT"
-ensure_registry "$PROD_PROJECT"
 bind_deployer "$STAGING_PROJECT"
-bind_deployer "$PROD_PROJECT"
 
-PROVIDER_RESOURCE="projects/${STAGING_NUMBER}/locations/global/workloadIdentityPools/${POOL}/providers/${PROVIDER}"
+PROVIDER_RESOURCE="projects/${CI_NUMBER}/locations/global/workloadIdentityPools/${POOL}/providers/${PROVIDER}"
+STAGING_DEPLOYER="${ACCOUNT}@${STAGING_PROJECT}.iam.gserviceaccount.com"
 
 cat <<EOF
+
+Staging deployer is ready. This script did not deploy and did not change production.
+
+Create the GitHub environment "staging" before the first staging plan or deploy, if it does not exist yet.
+A repository admin does that under Settings → Environments. Also create "production" and add a required reviewer there when the plan allows it.
 
 Set these Actions variables on ${REPO}:
 
 WIF_PROVIDER_STAGING=${PROVIDER_RESOURCE}
-WIF_SERVICE_ACCOUNT_STAGING=${NAME}-deployer@${STAGING_PROJECT}.iam.gserviceaccount.com
-WIF_PROVIDER_PROD=${PROVIDER_RESOURCE}
-WIF_SERVICE_ACCOUNT_PROD=${NAME}-deployer@${PROD_PROJECT}.iam.gserviceaccount.com
+WIF_SERVICE_ACCOUNT_STAGING=${STAGING_DEPLOYER}
 
 gh variable set WIF_PROVIDER_STAGING --repo ${REPO} --body "${PROVIDER_RESOURCE}"
-gh variable set WIF_SERVICE_ACCOUNT_STAGING --repo ${REPO} --body "${NAME}-deployer@${STAGING_PROJECT}.iam.gserviceaccount.com"
-gh variable set WIF_PROVIDER_PROD --repo ${REPO} --body "${PROVIDER_RESOURCE}"
-gh variable set WIF_SERVICE_ACCOUNT_PROD --repo ${REPO} --body "${NAME}-deployer@${PROD_PROJECT}.iam.gserviceaccount.com"
+gh variable set WIF_SERVICE_ACCOUNT_STAGING --repo ${REPO} --body "${STAGING_DEPLOYER}"
+
+Send scripts/bind-production.sh to someone who can change IAM in this app's production project.
+They do not need access to ${STAGING_PROJECT}.
 EOF

@@ -26,11 +26,11 @@ Deploy is still the old path at the end of this step.
 
 ## 3. Staging
 
-Run [scripts/bind-repo.sh](../scripts/bind-repo.sh) once `opptra-staging` exists. If the Cloud Run service already exists, import it into the staging state before the first apply. The commands are in [resources.md](resources.md). Then merge to `staging` and confirm `/api/health` on the URL the workflow comments. The plan on that pull request should be an update, not a second service.
+Create the GitHub environments and run [scripts/bind-staging.sh](../scripts/bind-staging.sh) once `opptra-staging` exists. The developer does this step. The full order, including what a repository admin adds on GitHub, is in [bind.md](bind.md). If the Cloud Run service already exists, import it into the staging state before the first apply. The commands are in [resources.md](resources.md). Then push to `staging` and confirm `/api/health` on the URL the workflow comments. The plan on that pull request should be an update, not a second service.
 
 ## 4. Production
 
-Open the pull request from `staging` to `main`. Merge it. Confirm the Cloud Run revision in `prod_project` is the same commit SHA.
+Send [scripts/bind-production.sh](../scripts/bind-production.sh) to someone who can change IAM in `prod_project`. They run it and set the two production Actions variables, as [bind.md](bind.md) describes. Then open the pull request from `main` into `production`. Merge it. Confirm the Cloud Run revision in `prod_project` is the same commit SHA.
 
 ## 5. Remove the laptop path
 

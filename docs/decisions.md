@@ -1,7 +1,7 @@
 ---
 title: Decisions
 parent: Platform
-nav_order: 5
+nav_order: 6
 ---
 
 # Decisions
@@ -46,7 +46,7 @@ The required check is `ci` (plus `plan` when the app has Terraform). Ruff and fr
 
 ## Deploy mechanism
 
-GitHub Actions reusable workflows in this repository. Workload Identity Federation. No service-account key in GitHub. The image is built on the GitHub runner and tagged with the git SHA. Artifact Registry repository name is `apps`.
+GitHub Actions reusable workflows in this repository. Workload Identity Federation through the pool `opptra-github` in `opptra-sdlc-ci`. No service-account key in GitHub. A staging workflow impersonates only the staging deployer. A production workflow impersonates only the production deployer. The image is built on the GitHub runner and tagged with the git SHA. Artifact Registry repository name is `apps`.
 
 Terraform is the only thing that creates, changes, or deletes GCP resources for an app. A pull request runs `terraform plan` and comments the add, change, and destroy list. The merge builds the image, plans again, and applies. Details are in [resources.md](resources.md).
 
