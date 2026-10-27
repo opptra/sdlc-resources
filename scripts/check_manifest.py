@@ -96,6 +96,7 @@ ALLOWED_COMPONENT_KEYS = {
     "bucket",
     "queue",
     "secrets",
+    "env",
     "alerts",
     "run_tests",
     "run_lint",
