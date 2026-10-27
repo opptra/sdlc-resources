@@ -61,6 +61,23 @@ jobs:
         with:
           terraform_version: "1.10.5"
           terraform_wrapper: false
+      - name: Create secret shells and require a version
+        working-directory: ${{ inputs.working_directory }}/infra
+        env:
+          PROJECT: ${{ steps.manifest.outputs.project_id }}
+          NAME: ${{ steps.manifest.outputs.name }}
+        run: |
+          set -euo pipefail
+          terraform init -input=false \
+            -backend-config="bucket=${PROJECT}-tfstate" \
+            -backend-config="prefix=${NAME}"
+          if grep -q 'module "secrets"' main.tf; then
+            terraform apply -input=false -auto-approve -lock-timeout=120s \
+              -var-file=ci.auto.tfvars.json -target=module.secrets
+          fi
+          python3 "$GITHUB_WORKSPACE/scripts/check_secret_versions.py" \
+            --project "$PROJECT" \
+            --main-tf main.tf
       - name: Build and push
         working-directory: ${{ inputs.working_directory }}
         env:
@@ -76,6 +93,7 @@ jobs:
           PROJECT: ${{ steps.manifest.outputs.project_id }}
           NAME: ${{ steps.manifest.outputs.name }}
         run: |
+          set -euo pipefail
           terraform init -input=false \
             -backend-config="bucket=${PROJECT}-tfstate" \
             -backend-config="prefix=${NAME}"

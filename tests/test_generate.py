@@ -174,7 +174,11 @@ unmet:
         assert 'module "bucket"' in main_tf
         assert 'module "queue"' in main_tf
         assert 'module "secrets"' in main_tf
-        assert '"cx-automation-freshdesk-opptra"' in main_tf
+        assert '"cx-automation-freshdesk_opptra"' in main_tf
+        assert 'module.secrets.by_id["cx-automation-freshdesk_opptra"]' in main_tf
+        assert 'module.secrets.by_id["cx-automation-webhook_secret"]' in main_tf
+        secrets_section = main_tf.split('module "secrets"')[1].split('module "schedule"')[0]
+        assert "runtime_service_account" not in secrets_section
         assert 'module "schedule"' in main_tf
         assert 'module "receiver"' in main_tf
         assert 'module "alerts"' in main_tf
@@ -197,7 +201,12 @@ unmet:
         assert (dest / ".cursor" / "rules" / "firestore.mdc").is_file()
         assert (dest / ".cursor" / "rules" / "job.mdc").is_file()
         assert (dest / ".env.example").is_file()
-        assert "SECRET_FRESHDESK_OPPTRA=replace-me" in (dest / ".env.example").read_text()
+        assert "FRESHDESK_OPPTRA=replace-me" in (dest / ".env.example").read_text()
+        copied_check = dest / "scripts" / "check_secret_versions.py"
+        assert copied_check.is_file()
+        assert copied_check.read_text() == (ROOT / "scripts" / "check_secret_versions.py").read_text()
+        assert (dest / "scripts" / "render_tfvars.py").is_file()
+        assert (dest / "scripts" / "yaml_subset.py").is_file()
         assert (dest / "Makefile").is_file()
         assert "ci:" in (dest / "Makefile").read_text()
         assert (dest / ".githooks" / "pre-commit").is_file()

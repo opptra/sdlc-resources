@@ -48,7 +48,27 @@ if ! gcloud iam workload-identity-pools describe "$POOL" \
 fi
 
 CI_NUMBER="$(gcloud projects describe "$CI_PROJECT" --format='value(projectNumber)')"
-MEMBER="principal://iam.googleapis.com/projects/${CI_NUMBER}/locations/global/workloadIdentityPools/${POOL}/subject/repo:${REPO}:environment:${ENVIRONMENT}"
+
+github_subject() {
+  local repo="$1"
+  local environment="$2"
+  local prefix
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "gh is required to read the GitHub token name for ${repo}." >&2
+    exit 1
+  fi
+  prefix="$(gh api "repos/${repo}/actions/oidc/customization/sub" --jq '.sub_claim_prefix')"
+  if [[ -z "$prefix" || "$prefix" != repo:* ]]; then
+    echo "could not read the GitHub token name for ${repo}" >&2
+    exit 1
+  fi
+  printf '%s:environment:%s' "$prefix" "$environment"
+}
+
+SUBJECT="$(github_subject "$REPO" "$ENVIRONMENT")"
+LEGACY_SUBJECT="repo:${REPO}:environment:${ENVIRONMENT}"
+MEMBER="principal://iam.googleapis.com/projects/${CI_NUMBER}/locations/global/workloadIdentityPools/${POOL}/subject/${SUBJECT}"
+LEGACY_MEMBER="principal://iam.googleapis.com/projects/${CI_NUMBER}/locations/global/workloadIdentityPools/${POOL}/subject/${LEGACY_SUBJECT}"
 
 enable_apis() {
   local project="$1"
@@ -138,6 +158,8 @@ bind_deployer() {
   grant_project_role "$project" "$deployer" roles/cloudtasks.admin
   grant_project_role "$project" "$deployer" roles/storage.admin
   grant_project_role "$project" "$deployer" roles/monitoring.alertPolicyEditor
+  # Log-based alerts also create a Logging notification rule.
+  grant_project_role "$project" "$deployer" roles/logging.configWriter
 
   gcloud storage buckets add-iam-policy-binding "gs://${bucket}" \
     --member="serviceAccount:${deployer}" \
@@ -149,6 +171,13 @@ bind_deployer() {
     --quiet >/dev/null
 
   drop_repo_wide_binding "$project" "$deployer"
+  if [[ "$SUBJECT" != "$LEGACY_SUBJECT" ]]; then
+    gcloud iam service-accounts remove-iam-policy-binding "$deployer" \
+      --project="$project" \
+      --member="$LEGACY_MEMBER" \
+      --role=roles/iam.workloadIdentityUser \
+      --quiet >/dev/null 2>&1 || true
+  fi
   gcloud iam service-accounts add-iam-policy-binding "$deployer" \
     --project="$project" \
     --member="$MEMBER" \

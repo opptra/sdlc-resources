@@ -25,9 +25,11 @@ The plan on the pull request is the one a person reads. The merge creates a new 
 
 ## What Terraform owns
 
+An app's `infra/main.tf` calls the shared modules, and the generator copies those module folders into `infra/modules/` so a deploy does not clone this repository. [Local Terraform modules](local-terraform-modules.md) is that layout. Each recipe is described in [modules/](../modules/).
+
 [modules/cloud-run-service](../modules/cloud-run-service/) declares, for one app in one project:
 
-- Runtime service account `<name>-runtime`
+- Runtime service account `<name>-rt` (the account id is cut at 28 characters)
 - The Cloud Run service, including CPU, memory, env, and the image
 - Who can invoke it
 
@@ -51,7 +53,7 @@ Import it once, from a machine that can read the project, before the first apply
 cd infra
 terraform init -backend-config="bucket=<project>-tfstate" -backend-config="prefix=<name>"
 terraform import module.service.google_cloud_run_v2_service.app projects/<project>/locations/<region>/services/<name>
-terraform import module.service.google_service_account.runtime projects/<project>/serviceAccounts/<name>-runtime@<project>.iam.gserviceaccount.com
+terraform import module.service.google_service_account.runtime projects/<project>/serviceAccounts/<name>-rt@<project>.iam.gserviceaccount.com
 ```
 
 Then open a pull request. The plan should be an update, not a create.

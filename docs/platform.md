@@ -9,6 +9,7 @@ has_children: true
 The pages in this section are the platform rules behind an app.
 
 - [Resources](resources.md)
+- [Local Terraform modules](local-terraform-modules.md)
 - [GCP bootstrap](gcp-bootstrap.md)
 - [Bind a repository](bind.md)
 - [Alerts](alerting.md)

@@ -16,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from build_rules import write_bundle
-from check_manifest import check, normalize, prefixed_name
+from check_manifest import check, normalize, prefixed_name, secret_resource_id
 from yaml_subset import dump, parse
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,7 +47,7 @@ dist/
 .env
 .env.*
 !.env.example
-secrets/
+/secrets/
 *.pem
 *.key
 
@@ -362,6 +362,32 @@ def _hcl_string_list(items: list[str]) -> str:
     return f"[{inner}]"
 
 
+def _unique_secret_ids(prefix: str, names: list[str]) -> list[str]:
+    """Secret Manager ids for these environment variable names, in first-seen order."""
+    secret_ids: list[str] = []
+    for raw in names:
+        secret_id = secret_resource_id(prefix, str(raw))
+        if secret_id not in secret_ids:
+            secret_ids.append(secret_id)
+    return secret_ids
+
+
+def _mounted_secret_ids_hcl(secret_ids: list[str]) -> str:
+    """HCL for the secrets this workload's runtime account may read.
+
+    Referencing ``module.secrets.by_id`` makes the grant wait until the shell
+    exists. An empty list means this workload mounts nothing, so it does not
+    reference the secrets module.
+    """
+    if not secret_ids:
+        return "  mounted_secret_ids = []\n"
+    lines = ["  mounted_secret_ids = ["]
+    for secret_id in secret_ids:
+        lines.append(f'    module.secrets.by_id["{secret_id}"],')
+    lines.append("  ]")
+    return "\n".join(lines) + "\n"
+
+
 def write_infra(mapping: dict, app: dict, component: dict, dest: Path) -> None:
     module = None
     for part in component["parts"]:
@@ -374,7 +400,8 @@ def write_infra(mapping: dict, app: dict, component: dict, dest: Path) -> None:
     has_bucket = component.get("bucket", "none") == "private"
     raw_queue = component.get("queue")
     queue_name = prefixed_name(prefix, app_name, str(raw_queue)) if raw_queue else None
-    secrets = [prefixed_name(prefix, app_name, str(s)) for s in component.get("secrets", [])]
+    # Keep the env var's underscores. prefixed_name is for Cloud Run names only.
+    secrets = [secret_resource_id(prefix, str(s)) for s in component.get("secrets", [])]
     has_alerts = bool(component.get("alerts", False))
     receiver = component.get("receiver")
     jobs = component.get("jobs") or []
@@ -385,8 +412,21 @@ def write_infra(mapping: dict, app: dict, component: dict, dest: Path) -> None:
     if infra.exists():
         shutil.rmtree(infra)
     infra.mkdir(parents=True)
-    ref = mapping["ref"]
-    repo = mapping["repo"]
+    copied_modules: set[str] = set()
+
+    def module_source(name: str) -> str:
+        """Copy one shared module into the app and return its local source path.
+
+        Deploy runners then read the files in the app checkout. They do not clone
+        sdlc-resources again for each module block.
+        """
+        if name not in copied_modules:
+            src = ROOT / "modules" / name
+            if not src.is_dir():
+                raise SystemExit(f"missing terraform module: {src}")
+            shutil.copytree(src, infra / "modules" / name)
+            copied_modules.add(name)
+        return f'"./modules/{name}"'
     (infra / "versions.tf").write_text(
         """terraform {
   required_version = ">= 1.9.0"
@@ -419,7 +459,7 @@ provider "google" {
     if has_postgres:
         blocks.append(
             f"""module "db" {{
-  source = "git::https://github.com/{repo}.git//modules/cloud-sql?ref={ref}"
+  source = {module_source("cloud-sql")}
 
   project_id = var.project_id
   region     = var.region
@@ -446,6 +486,7 @@ provider "google" {
                 scheds = _hcl_string_list([str(s) for s in j.get("schedules", [])])
                 timeout = int(j.get("timeout_seconds", 1800))
                 mem = str(j.get("memory", "1Gi"))
+                job_secrets = _hcl_string_list([str(s) for s in j.get("secrets", [])])
                 job_entries.append(
                     f'    "{jname}" = {{\n'
                     f"      command         = {_hcl_string_list(cmd_parts)}\n"
@@ -454,13 +495,35 @@ provider "google" {
                     f"      schedules       = {scheds}\n"
                     f"      timeout_seconds = {timeout}\n"
                     f'      memory          = "{mem}"\n'
+                    f"      secrets         = {job_secrets}\n"
                     f"    }}"
                 )
             jobs_hcl = "  jobs = {\n" + "\n".join(job_entries) + "\n  }\n"
+        # Mount each listed variable from <prefix>-<ENV_NAME>. The process reads the variable.
+        jobs_hcl += f'  secret_prefix   = "{prefix}"\n'
+        if has_bucket:
+            jobs_hcl += '  gcs_bucket_name = "${var.project_id}-${var.name}-assets"\n'
+        plain = component.get("env") or {}
+        if isinstance(plain, dict) and plain:
+            # Domains, ports, and flags. Not mounted from Secret Manager.
+            body = "\n".join(f'    {key} = "{value}"' for key, value in plain.items())
+            jobs_hcl += f"  plain_env = {{\n{body}\n  }}\n"
+        if module == "cloud-run-job":
+            job_secret_names: list[str] = []
+            for job in jobs:
+                for raw in job.get("secrets", []):
+                    if str(raw) not in job_secret_names:
+                        job_secret_names.append(str(raw))
+            jobs_hcl += _mounted_secret_ids_hcl(_unique_secret_ids(prefix, job_secret_names))
+        elif module == "cloud-run-service":
+            service_secret_names = [str(item) for item in component.get("secrets", [])]
+            if service_secret_names:
+                jobs_hcl += f"  secrets             = {_hcl_string_list(service_secret_names)}\n"
+            jobs_hcl += _mounted_secret_ids_hcl(_unique_secret_ids(prefix, service_secret_names))
 
         blocks.append(
             f"""module "service" {{
-  source = "git::https://github.com/{repo}.git//modules/{module}?ref={ref}"
+  source = {module_source(module)}
 
   project_id  = var.project_id
   region      = var.region
@@ -483,7 +546,7 @@ provider "google" {
     if has_firestore and module:
         blocks.append(
             f"""module "firestore" {{
-  source = "git::https://github.com/{repo}.git//modules/firestore?ref={ref}"
+  source = {module_source("firestore")}
 
   project_id              = var.project_id
   runtime_service_account = module.service.runtime_service_account
@@ -493,7 +556,7 @@ provider "google" {
     if has_bucket and module:
         blocks.append(
             f"""module "bucket" {{
-  source = "git::https://github.com/{repo}.git//modules/bucket?ref={ref}"
+  source = {module_source("bucket")}
 
   project_id              = var.project_id
   region                  = var.region
@@ -505,7 +568,7 @@ provider "google" {
     if queue_name and module:
         blocks.append(
             f"""module "queue" {{
-  source = "git::https://github.com/{repo}.git//modules/queue?ref={ref}"
+  source = {module_source("queue")}
 
   project_id              = var.project_id
   region                  = var.region
@@ -517,11 +580,10 @@ provider "google" {
     if secrets and module:
         blocks.append(
             f"""module "secrets" {{
-  source = "git::https://github.com/{repo}.git//modules/secrets?ref={ref}"
+  source = {module_source("secrets")}
 
-  project_id              = var.project_id
-  secret_ids              = {_hcl_string_list(secrets)}
-  runtime_service_account = module.service.runtime_service_account
+  project_id = var.project_id
+  secret_ids = {_hcl_string_list(secrets)}
 }}"""
         )
 
@@ -549,7 +611,7 @@ provider "google" {
         )
         blocks.append(
             f"""module "schedule" {{
-  source = "git::https://github.com/{repo}.git//modules/schedule?ref={ref}"
+  source = {module_source("schedule")}
 
   project_id              = var.project_id
   region                  = var.region
@@ -569,24 +631,36 @@ provider "google" {
                 )
             )
         )
+        receiver_secret_names = [str(s) for s in receiver.get("secrets", [])]
+        rsecrets = _hcl_string_list(receiver_secret_names)
+        receiver_mounts = _mounted_secret_ids_hcl(_unique_secret_ids(prefix, receiver_secret_names))
+        queue_env = ""
+        if queue_name:
+            queue_env = (
+                "\n  plain_env = {\n"
+                f'    CLOUD_TASKS_QUEUE = "{queue_name}"\n'
+                "  }\n"
+            )
         blocks.append(
             f"""module "receiver" {{
-  source = "git::https://github.com/{repo}.git//modules/cloud-run-service?ref={ref}"
+  source = {module_source("cloud-run-service")}
 
-  project_id  = var.project_id
-  region      = var.region
-  name        = "{rname}"
-  environment = var.environment
-  auth        = "{rauth}"
-  image       = var.image
-  command     = {_hcl_string_list(rcmd)}
-}}"""
+  project_id    = var.project_id
+  region        = var.region
+  name          = "{rname}"
+  environment   = var.environment
+  auth          = "{rauth}"
+  image         = var.image
+  command       = {_hcl_string_list(rcmd)}
+  secret_prefix = "{prefix}"
+  secrets       = {rsecrets}
+{receiver_mounts}{queue_env}}}"""
         )
 
     if has_alerts and module:
         blocks.append(
             f"""module "alerts" {{
-  source = "git::https://github.com/{repo}.git//modules/alerts?ref={ref}"
+  source = {module_source("alerts")}
 
   project_id = var.project_id
   name       = var.name
@@ -985,11 +1059,11 @@ def write_local_dev_files(app: dict, components: list[dict], dest: Path) -> None
     if all_secrets:
         env_lines += [
             "",
-            "# Secrets declared in service.yaml (read from env locally, Secret Manager in cloud)",
+            "# Same name as the process variable. Cloud stores it as <prefix>-<NAME>.",
         ]
         for s in all_secrets:
-            upper = s.upper().replace("-", "_")
-            env_lines.append(f"SECRET_{upper}=replace-me")
+            env_name = s if s.isupper() else s.upper().replace("-", "_")
+            env_lines.append(f"{env_name}=replace-me")
 
     env_text = "\n".join(env_lines) + "\n"
     (dest / ".env.example").write_text(env_text)
@@ -1262,8 +1336,10 @@ def write_repo_hygiene(dest: Path) -> None:
         (openspec_dir / ".gitkeep").write_text("")
     scripts_dir = dest / "scripts"
     scripts_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(ROOT / "scripts" / "render_tfvars.py", scripts_dir / "render_tfvars.py")
-    shutil.copy2(ROOT / "scripts" / "yaml_subset.py", scripts_dir / "yaml_subset.py")
+    # Deploy workflows check out the app, then run these files from that
+    # checkout. They are not read from sdlc-resources at deploy time.
+    for filename in ("render_tfvars.py", "yaml_subset.py", "check_secret_versions.py"):
+        shutil.copy2(ROOT / "scripts" / filename, scripts_dir / filename)
 
 
 def _load_and_normalize(manifest_path: Path) -> tuple[dict, dict, list[dict]]:

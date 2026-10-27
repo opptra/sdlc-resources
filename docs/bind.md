@@ -52,7 +52,9 @@ A checkout of `opptra/sdlc-resources` that was not filled in by the generator ta
 scripts/bind-staging.sh opptra/<repo>
 ```
 
-The script creates `<repo-name>-deployer` in `opptra-staging`, grants it permission to push images and apply Terraform, and lets only the GitHub environment `staging` impersonate it. The service-account id must be 6 to 30 characters. A longer repository name fails here.
+The script creates `<repo-name>-deployer` in `opptra-staging`, grants it permission to push images and apply Terraform, and lets only the GitHub environment `staging` impersonate it. The apply permission includes Logging Configuration Writer, because a log-based error alert also creates a Logging notification rule. The service-account id must be 6 to 30 characters. A longer repository name fails here.
+
+Both bind scripts require `gh`. Each reads the repository's token name from GitHub and trusts that name. A login that cannot read the repository stops here. When that name differs from the older `repo:<org/repo>:environment:<environment>` form, the script removes the old binding.
 
 Staging can deploy after this step and the two staging variables are set. Production cannot deploy yet.
 

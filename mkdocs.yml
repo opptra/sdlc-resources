@@ -36,6 +36,7 @@ nav:
   - Platform:
       - platform.md
       - Resources: resources.md
+      - Local Terraform modules: local-terraform-modules.md
       - GCP bootstrap: gcp-bootstrap.md
       - Bind a repository: bind.md
       - Alerts: alerting.md

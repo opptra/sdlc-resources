@@ -55,3 +55,27 @@ variable "command" {
   default     = []
   description = "Optional command override for the container."
 }
+
+variable "mounted_secret_ids" {
+  type        = list(string)
+  default     = []
+  description = "Secret Manager ids this service account may read. Pass module.secrets.by_id values so the grant waits for each shell."
+}
+
+variable "secret_prefix" {
+  type        = string
+  default     = ""
+  description = "App prefix from service.yaml. A secret id is <prefix>-<ENV_NAME>."
+}
+
+variable "secrets" {
+  type        = list(string)
+  default     = []
+  description = "Environment variable names to mount from Secret Manager."
+}
+
+variable "plain_env" {
+  type        = map(string)
+  default     = {}
+  description = "Non-secret settings such as a queue name. Keys and passwords are secrets."
+}

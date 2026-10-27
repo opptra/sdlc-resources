@@ -17,7 +17,9 @@ NAME = re.compile(r"^[a-z][a-z0-9-]{1,48}$")
 PREFIX = re.compile(r"^[a-z][a-z0-9-]{1,20}$")
 COMPONENT = re.compile(r"^[a-z][a-z0-9-]{1,40}$")
 JOB_NAME = re.compile(r"^[a-z][a-z0-9_-]{1,40}$")
-SECRET_ID = re.compile(r"^[a-z][a-z0-9_-]{1,48}$")
+# An entry in secrets is the environment variable name. The generator adds the
+# app prefix. Underscores stay so the Secret Manager id is <prefix>-<ENV_NAME>.
+SECRET_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{1,80}$")
 
 
 def prefixed_name(prefix: str, app_name: str, raw_name: str) -> str:
@@ -28,6 +30,22 @@ def prefixed_name(prefix: str, app_name: str, raw_name: str) -> str:
         if clean == p or clean.startswith(f"{p}-"):
             return clean
     return f"{prefix}-{clean}"
+
+
+def secret_resource_id(prefix: str, raw_name: str) -> str:
+    """Secret Manager id for one environment variable.
+
+    Job and service names go through prefixed_name, which turns underscores
+    into hyphens because Cloud Run rejects underscores. A secret must stay
+    the variable name plus the app prefix, so a person looking at
+    FRESHDESK_CUSTOMERCARE_API_KEY creates cx-FRESHDESK_CUSTOMERCARE_API_KEY.
+    The job name is not part of the id. Using it produced a third name that
+    matched neither the variable nor the secret.
+    """
+    name = str(raw_name).strip()
+    if not prefix or name == prefix or name.startswith(f"{prefix}-"):
+        return name
+    return f"{prefix}-{name}"
 
 ARCHETYPES = {
     "cloud-run-service": {
@@ -461,7 +479,14 @@ def check(data: dict) -> list[str]:
 
         for sec in component.get("secrets", []):
             if SECRET_ID.fullmatch(str(sec)) is None:
-                errors.append(f"{cname}: secret id {sec!r} is not a lowercase slug")
+                errors.append(f"{cname}: secret {sec!r} must be an environment variable name")
+        env = component.get("env")
+        if env is not None and not isinstance(env, dict):
+            errors.append(f"{cname}: env must be a mapping of variable name to value")
+        elif isinstance(env, dict):
+            for key in env:
+                if SECRET_ID.fullmatch(str(key)) is None:
+                    errors.append(f"{cname}: env {key!r} must be an environment variable name")
 
         receiver = component.get("receiver")
         if receiver is not None:
@@ -512,7 +537,7 @@ def check(data: dict) -> list[str]:
                     for sec in job.get("secrets", []):
                         if SECRET_ID.fullmatch(str(sec)) is None:
                             errors.append(
-                                f"{cname}.{jname}: secret id {sec!r} is not a lowercase slug"
+                                f"{cname}.{jname}: secret {sec!r} must be an environment variable name"
                             )
     return errors
 

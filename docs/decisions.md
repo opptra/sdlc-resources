@@ -52,7 +52,19 @@ Terraform is the only thing that creates, changes, or deletes GCP resources for 
 
 ## Auth
 
-Each callable service or receiver records `auth` in `service.yaml`: `iap` (Opptra staff), `app-login` (the app signs users in), `shared-secret` (webhook caller verified by header), or `public`. Jobs and workers use `none`.
+Each callable service or receiver records `auth` in `service.yaml`: `iap` (Opptra staff), `app-login` (the app signs users in), `shared-secret` (webhook caller verified by header), or `public`. The Cloud Run module reads that value. `iap` keeps the invoker check and grants the IAP service agent. `app-login`, `public`, and `shared-secret` disable the invoker check so a caller outside the Workspace customer can reach the URL, and the app checks the caller. Jobs and workers use `none`.
+
+## Secrets
+
+A secret id is the environment variable name plus the app `prefix` from `service.yaml`. `FRESHDESK_CUSTOMERCARE_API_KEY` is stored as `cx-FRESHDESK_CUSTOMERCARE_API_KEY` and mounted back into the process under `FRESHDESK_CUSTOMERCARE_API_KEY`.
+
+Nickname ids such as `cx-smtp` did not match the variables the code reads, and building the id from the Cloud Run job name produced a third id. The job name stays out of the secret id. Cloud Run names still drop underscores, because Cloud Run rejects them. Secret ids keep the underscores so the name in Secret Manager is the variable with the prefix in front.
+
+Keys and passwords are secrets. Domains, ports, email addresses, and flags such as `DRY_RUN` are plain environment variables. The generator writes both from `service.yaml`. The value is not committed.
+
+The deploy creates the secret shells first. Cloud Run mounts `latest` only after a version exists, because it opens that version while saving the revision. When a mounted secret has no version, the workflow stops and prints the ids. A person adds version 1 in Secret Manager and re-runs the same workflow. The next run mounts the secrets and updates Cloud Run.
+
+The account that mounts a secret receives `roles/secretmanager.secretAccessor` on that secret, and the Cloud Run resource waits for the grant. A job and a webhook are different accounts, so each receives only the secrets that workload mounts.
 
 ## Agent rules
 

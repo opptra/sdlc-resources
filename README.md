@@ -25,6 +25,11 @@ A pull request from `main` into `production` deploys `prod_project` from `servic
 | [docs/bug.md](docs/bug.md) | Reviewing a bug |
 | [docs/gcp-bootstrap.md](docs/gcp-bootstrap.md) | The one-time GCP setup |
 | [docs/bind.md](docs/bind.md) | What to add on GitHub, which bind script you run, and which script to send to someone with production access |
+| [modules/](modules/) | Terraform recipes. The generator copies the ones an app uses into that app's `infra/modules/`. |
+| [scripts/](scripts/) | The generator, the checks, and the three Python files a deploy runs from the app checkout. |
+| [.github/workflows/](.github/workflows/) | Reusable CI and deploy workflows. An app calls them. It does not copy them. |
+| [skeletons/](skeletons/) | Starting files copied into a new app. |
+| [rules/source/](rules/source/) | Agent rule text, compiled into an app from the capabilities in `service.yaml`. |
 
 Apps Script is not generated. When a request includes needs outside the current catalog, the skill scaffolds all supported parts and records the gap under `unmet` with a recommendation.
 
@@ -41,5 +46,5 @@ Apps Script is not generated. When a request includes needs outside the current 
 | `database: firestore` | Default Firestore Native DB IAM, `firestore_state.py` (lease locks, heartbeats, idempotency, generation pointers) |
 | `bucket: private` | Private GCS bucket (`<project>-<name>-assets`), uniform access, storage helper |
 | `queue` | Cloud Tasks queue and enqueuer IAM |
-| `secrets` | Secret Manager secret shells (no values in repo/state) and accessor IAM |
+| `secrets` | Secret Manager shells named `<prefix>-<ENV_NAME>`. No values in the repo or in state. The workload grants its own runtime account. |
 | `alerts` | Log-based alert policy for failed job runs / unhandled `severity>=ERROR` logs |

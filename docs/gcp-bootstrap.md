@@ -111,7 +111,7 @@ gcloud artifacts repositories create apps \
 
 ## 6. Bind each repository
 
-Follow [bind.md](bind.md). The developer runs [scripts/bind-staging.sh](../scripts/bind-staging.sh). Someone who can change IAM in `prod_project` runs [scripts/bind-production.sh](../scripts/bind-production.sh). Each script creates `<repo-name>-deployer` in one project, grants it permission to apply Terraform and push images, and lets one GitHub environment impersonate it. Terraform creates `<service-name>-runtime` and the Cloud Run service.
+Follow [bind.md](bind.md). The developer runs [scripts/bind-staging.sh](../scripts/bind-staging.sh). Someone who can change IAM in `prod_project` runs [scripts/bind-production.sh](../scripts/bind-production.sh). Each script creates `<repo-name>-deployer` in one project, grants it permission to apply Terraform and push images, and lets one GitHub environment impersonate it. Terraform creates the runtime account `<service-name>-rt` and the Cloud Run service.
 
 Humans do not receive deploy roles. People who need to look at staging get viewer. Existing prod project owners stay as they are. After the pilot has deployed through GitHub, remove leftover user-wide Editor roles on those prod projects.
 
@@ -121,7 +121,7 @@ On the billing account, add a budget for `opptra-staging` that notifies at 50%, 
 
 ## 8. Public invoker
 
-`auth: app-login` and `auth: public` grant `roles/run.invoker` to `allUsers`. If an organization policy blocks `allUsers`, the apply fails. The fix is an organization exception for that service, or `auth: iap`. Do not work around it by putting a service-account key in GitHub.
+`auth: app-login`, `auth: public`, and `auth: shared-secret` disable the Cloud Run invoker check. The application checks the caller. `auth: iap` keeps the check and grants the IAP service agent. The module does not grant `allUsers`, because domain restricted sharing rejects that member. Do not work around it by putting a service-account key in GitHub.
 
 ## 9. Region
 

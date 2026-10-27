@@ -92,7 +92,7 @@
             "type": "array",
             "items": {
               "type": "string",
-              "pattern": "^[a-z][a-z0-9_-]{1,48}$"
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]{1,80}$"
             }
           }
         }
@@ -112,7 +112,7 @@
           "type": "array",
           "items": {
             "type": "string",
-            "pattern": "^[a-z][a-z0-9_-]{1,48}$"
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{1,80}$"
           }
         },
         "alerts": { "type": ["boolean", "object", "string"] }
@@ -199,8 +199,13 @@
             "type": "array",
             "items": {
               "type": "string",
-              "pattern": "^[a-z][a-z0-9_-]{1,48}$"
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]{1,80}$"
             }
+          },
+          "env": {
+            "type": "object",
+            "additionalProperties": { "type": "string" },
+            "description": "Non-secret variables such as a domain, port, or flag. Keys and passwords belong in secrets."
           },
           "alerts": {
             "type": "boolean"
@@ -237,7 +242,7 @@
                 "type": "array",
                 "items": {
                   "type": "string",
-                  "pattern": "^[a-z][a-z0-9_-]{1,48}$"
+                  "pattern": "^[A-Za-z][A-Za-z0-9_-]{1,80}$"
                 }
               }
             }
@@ -279,7 +284,7 @@
                   "type": "array",
                   "items": {
                     "type": "string",
-                    "pattern": "^[a-z][a-z0-9_-]{1,48}$"
+                    "pattern": "^[A-Za-z][A-Za-z0-9_-]{1,80}$"
                   }
                 }
               }

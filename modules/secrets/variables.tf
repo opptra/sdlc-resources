@@ -3,10 +3,7 @@ variable "project_id" {
 }
 
 variable "secret_ids" {
-  type    = list(string)
-  default = []
-}
-
-variable "runtime_service_account" {
-  type = string
+  type        = list(string)
+  default     = []
+  description = "Secret Manager ids, each <prefix>-<ENV_NAME>. The workload that mounts one grants its own runtime account."
 }
