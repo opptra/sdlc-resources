@@ -91,6 +91,7 @@ def test_generate_selects_capabilities() -> None:
         assert "infra: <ticket-id>" in agents
         assert ".sdlc/state.yaml" not in agents
         assert "Do not log secret values" in agents
+        assert "Do not ask the user to name a skill or to run a script." in agents
         assert (dest / ".cursor" / "rules" / "react.mdc").is_file()
         assert "frontend/**/*.{ts,tsx}" in (dest / ".cursor" / "rules" / "react.mdc").read_text()
         assert (dest / ".cursor" / "rules" / "database.mdc").is_file()
@@ -122,6 +123,9 @@ components:
     alerts: true
     parts: [job]
     secrets: [freshdesk_opptra, smtp, webhook_secret]
+    env:
+      MAIL_TO: ops@opptra.com,finance@opptra.com
+      FRESHDESK_DOMAIN: https://opptra.freshdesk.com
     receiver:
       name: cx-webhook
       auth: shared-secret
@@ -202,6 +206,14 @@ unmet:
         assert (dest / ".cursor" / "rules" / "job.mdc").is_file()
         assert (dest / ".env.example").is_file()
         assert "FRESHDESK_OPPTRA=replace-me" in (dest / ".env.example").read_text()
+        example = (dest / ".env.example").read_text()
+        assert "MAIL_TO=ops@opptra.com,finance@opptra.com" in example
+        assert "FRESHDESK_DOMAIN=https://opptra.freshdesk.com" in example
+        assert 'MAIL_TO = "ops@opptra.com,finance@opptra.com"' in main_tf
+        assert 'FRESHDESK_DOMAIN = "https://opptra.freshdesk.com"' in main_tf
+        component_manifest = (comp_dir / "service.yaml").read_text()
+        assert "MAIL_TO:" in component_manifest
+        assert "ops@opptra.com,finance@opptra.com" in component_manifest
         copied_check = dest / "scripts" / "check_secret_versions.py"
         assert copied_check.is_file()
         assert copied_check.read_text() == (ROOT / "scripts" / "check_secret_versions.py").read_text()

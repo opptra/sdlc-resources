@@ -205,7 +205,7 @@
           "env": {
             "type": "object",
             "additionalProperties": { "type": "string" },
-            "description": "Non-secret variables such as a domain, port, or flag. Keys and passwords belong in secrets."
+            "description": "Non-secret variables such as a domain, port, email list, or flag. A list is one comma-separated string. Keys and passwords belong in secrets."
           },
           "alerts": {
             "type": "boolean"

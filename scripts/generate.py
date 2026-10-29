@@ -352,6 +352,9 @@ def write_component_manifest(app: dict, component: dict, dest: Path) -> None:
     if component.get("secrets"):
         secs = ", ".join(component["secrets"])
         lines.append(f"secrets: [{secs}]")
+    env = component.get("env")
+    if isinstance(env, dict) and env:
+        lines.append(dump({"env": env}).rstrip("\n"))
     if component.get("alerts"):
         lines.append("alerts: true")
     (dest / "service.yaml").write_text("\n".join(lines) + "\n")
@@ -360,6 +363,24 @@ def write_component_manifest(app: dict, component: dict, dest: Path) -> None:
 def _hcl_string_list(items: list[str]) -> str:
     inner = ", ".join(f'"{item}"' for item in items)
     return f"[{inner}]"
+
+
+def _hcl_quoted(value: str) -> str:
+    escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _hcl_map_key(key: str) -> str:
+    if str(key).isidentifier():
+        return str(key)
+    return _hcl_quoted(key)
+
+
+def _plain_env_hcl(plain: dict) -> str:
+    body = "\n".join(
+        f"    {_hcl_map_key(key)} = {_hcl_quoted(value)}" for key, value in plain.items()
+    )
+    return f"  plain_env = {{\n{body}\n  }}\n"
 
 
 def _unique_secret_ids(prefix: str, names: list[str]) -> list[str]:
@@ -505,9 +526,8 @@ provider "google" {
             jobs_hcl += '  gcs_bucket_name = "${var.project_id}-${var.name}-assets"\n'
         plain = component.get("env") or {}
         if isinstance(plain, dict) and plain:
-            # Domains, ports, and flags. Not mounted from Secret Manager.
-            body = "\n".join(f'    {key} = "{value}"' for key, value in plain.items())
-            jobs_hcl += f"  plain_env = {{\n{body}\n  }}\n"
+            # Domains, ports, email lists, and flags. Not mounted from Secret Manager.
+            jobs_hcl += _plain_env_hcl(plain)
         if module == "cloud-run-job":
             job_secret_names: list[str] = []
             for job in jobs:
@@ -1004,8 +1024,15 @@ def write_local_dev_files(app: dict, components: list[dict], dest: Path) -> None
         f"SERVICE_NAME={app['name']}",
         f"RESOURCE_PREFIX={prefix}",
         f"GOOGLE_CLOUD_PROJECT={app['prod_project']}",
-        "DRY_RUN=true",
     ]
+    plain_env: dict[str, str] = {}
+    for component in components:
+        env = component.get("env") or {}
+        if isinstance(env, dict):
+            for key, value in env.items():
+                plain_env[str(key)] = str(value)
+    if "DRY_RUN" not in plain_env:
+        env_lines.append("DRY_RUN=true")
     has_postgres = any(c.get("database") == "postgres" for c in components)
     has_firestore = any(c.get("database") == "firestore" for c in components)
     has_bigquery = any(c.get("database") == "bigquery" or c.get("bigquery") for c in components)
@@ -1050,6 +1077,14 @@ def write_local_dev_files(app: dict, components: list[dict], dest: Path) -> None
             "# Webhook shared secret for local testing",
             "WEBHOOK_SECRET=local-dev-secret",
         ]
+
+    if plain_env:
+        env_lines += [
+            "",
+            "# Plain settings from service.yaml. These values are what staging and production receive.",
+        ]
+        for key, value in plain_env.items():
+            env_lines.append(f"{key}={value}")
 
     all_secrets: list[str] = []
     for c in components:

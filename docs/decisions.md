@@ -60,7 +60,9 @@ A secret id is the environment variable name plus the app `prefix` from `service
 
 Nickname ids such as `cx-smtp` did not match the variables the code reads, and building the id from the Cloud Run job name produced a third id. The job name stays out of the secret id. Cloud Run names still drop underscores, because Cloud Run rejects them. Secret ids keep the underscores so the name in Secret Manager is the variable with the prefix in front.
 
-Keys and passwords are secrets. Domains, ports, email addresses, and flags such as `DRY_RUN` are plain environment variables. The generator writes both from `service.yaml`. The value is not committed.
+Keys and passwords are secrets. Domains, ports, email addresses, lists of emails, and flags such as `DRY_RUN` are plain environment variables. A list is one comma-separated string. The generator writes both from `service.yaml`. A secret value is not committed. A plain value is committed and copied into `.env.example`.
+
+An agent that needs a new setting classifies it, edits the root `service.yaml`, and runs `sync-infra` before product code. The user does not name the skill or the script. That manifest edit is its own pull request. Product code then reads a plain value with `get_env` and a secret with `get_secret`.
 
 The deploy creates the secret shells first. Cloud Run mounts `latest` only after a version exists, because it opens that version while saving the revision. When a mounted secret has no version, the workflow stops and prints the ids. A person adds version 1 in Secret Manager and re-runs the same workflow. The next run mounts the secrets and updates Cloud Run.
 

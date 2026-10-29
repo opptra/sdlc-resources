@@ -15,7 +15,7 @@ If the sentence does not name a skill, use `opptra`. It only picks the route:
 | New repository | `create-app` |
 | Existing repository onto this standard | `align-app` |
 | `deploy.sh`, Cloud Build, Vercel, or manual GCP onto Terraform | `adopt-terraform` |
-| Database, bucket, queue, secret, job, cron, region, or workload | `change-app` |
+| Database, bucket, queue, secret, plain environment variable, job, cron, region, or workload | `change-app` |
 | New product behavior | `feature` |
 | Broken or incorrect behavior | `bug` |
 
