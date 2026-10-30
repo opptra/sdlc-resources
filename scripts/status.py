@@ -595,14 +595,26 @@ def inspect_repo(repo_dir: Path) -> dict:
         {
             "id": 15,
             "area": "Local Development & .env.example",
-            "current": f".env.example={(repo_dir / '.env.example').is_file()}, Makefile={(repo_dir / 'Makefile').is_file()}",
-            "target": ".env.example + Makefile (`make setup`, `make dev`, `make test`) + local secret fallback",
+            "current": (
+                f".env.example={(repo_dir / '.env.example').is_file()}, "
+                f"Makefile={(repo_dir / 'Makefile').is_file()}, "
+                f"devcontainer={(repo_dir / '.devcontainer' / 'devcontainer.json').is_file()}"
+            ),
+            "target": ".env.example + Makefile (`make setup`, `make dev`, `make test`) + .devcontainer/devcontainer.json",
             "status": "Up to the mark"
-            if ((repo_dir / ".env.example").is_file() and (repo_dir / "Makefile").is_file())
+            if (
+                (repo_dir / ".env.example").is_file()
+                and (repo_dir / "Makefile").is_file()
+                and (repo_dir / ".devcontainer" / "devcontainer.json").is_file()
+            )
             else "Missing / Partial",
             "action": "None"
-            if ((repo_dir / ".env.example").is_file() and (repo_dir / "Makefile").is_file())
-            else "Run `sdlc.py sync-infra` to generate `.env.example` and `Makefile` for local runs",
+            if (
+                (repo_dir / ".env.example").is_file()
+                and (repo_dir / "Makefile").is_file()
+                and (repo_dir / ".devcontainer" / "devcontainer.json").is_file()
+            )
+            else "Run `sdlc.py sync-infra` to generate `.env.example`, `Makefile`, and `.devcontainer`",
         },
         {
             "id": 16,
@@ -691,7 +703,7 @@ MEANS = {
     12: "This is who can open the app. After it is set, staff use Google sign-in, a webhook checks a shared secret, and jobs stay private.",
     13: "This is how you notice a failure. After it is set, a failed job or a server error sends an alert instead of looking like a quiet success.",
     14: "This is the page a teammate reads first. After it matches the repo, they can run, test, and deploy without guessing.",
-    15: "This lets you run and test on your laptop first. After it is in place, copy `.env.example` to `.env` and run `make setup && make dev` before pushing to staging.",
+    15: "This lets you run and test on your laptop first. After it is in place, open the devcontainer or copy `.env.example` to `.env` and run `make setup && make dev` before pushing to staging.",
     16: "This ensures every Cloud Run service, job, scheduler entry, queue, secret, and bucket in shared GCP projects starts with your project prefix (`<prefix>-<resource>`) so resources are easy to identify and never collide.",
     17: "This runs fast secret/branch/manifest checks on `git commit` and runs `make ci` (lint + tests) on `git push` so broken code or secrets never leave your laptop.",
 }

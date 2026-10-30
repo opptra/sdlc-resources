@@ -58,7 +58,11 @@ def test_generate_selects_capabilities() -> None:
         assert "Example console and nightly job" in readme
         assert "uv run uvicorn" in readme
         assert "npm run dev" in readme
-        assert "git push" in readme
+        assert "git push origin HEAD:staging" in readme
+        assert "git merge main" not in readme
+        assert ".devcontainer/devcontainer.json" in readme
+        devcontainer = json.loads((dest / ".devcontainer" / "devcontainer.json").read_text())
+        assert "@fission-ai/openspec@1.15.0" in devcontainer["postCreateCommand"]
         deploy_staging = (dest / ".github" / "workflows" / "deploy-staging.yml").read_text()
         assert "branches: [staging]" in deploy_staging
         assert "deploy-cloud-run.yml" in deploy_staging

@@ -6,7 +6,15 @@ nav_order: 6
 
 # Align an existing repository
 
-`align-app` in `opptra/agent-skills` runs `scripts/sdlc.py status --json` against the open repository, compares it with the standard, and presents three sections: **Adopt now**, **Fill capability gaps**, and **Later recommendations**. It applies only the items the developer accepts.
+`align-app` in `opptra/agent-skills` runs `scripts/sdlc.py status` against the open repository and offers three paths. The developer says yes once. The 17-point scorecard still prints. It is the receipt, not a checklist of 17 decisions.
+
+| Path | What happens |
+|---|---|
+| Ship today | No files. The next step is `feature` or `bug`. |
+| Make the agent safe | The **Adopt now** list below. If `deploy.sh`, `vercel.json`, or `fly.toml` is present, CI is generated and that deploy path stays. |
+| Move the host | `adopt-terraform` in the same chat. `deploy.sh` stays until the first production Terraform apply has succeeded. |
+
+A bug on a repository that has never been aligned still uses `bug`. Alignment is not required to merge that fix.
 
 Apps Script is unsupported. Report it and leave the repository unchanged.
 

@@ -9,6 +9,7 @@ execution through `scripts/sdlc.py` (`init-runtime`, `add-data`, `add-tests`, `s
 from __future__ import annotations
 
 import argparse
+import json
 import shlex
 import shutil
 import sys
@@ -956,6 +957,13 @@ def write_readme(app: dict, components: list[dict], dest: Path) -> None:
         for item in unmet:
             lines.append(f"- **{item['name']}** — {item['need']} Recommendation: {item['suggestion']}")
     lines += ["", "## Run locally", ""]
+    lines.append(
+        "The supported laptop is `.devcontainer/devcontainer.json` "
+        "(Python 3.12, uv, Node 22, and the pinned OpenSpec). "
+        "On the host, copy `.env.example` to `.env` when that file exists "
+        "and run `make setup && make dev && make test`."
+    )
+    lines.append("")
     if local:
         lines.append("Copy `.env.example` to `.env`, install dependencies, and start the local runner:")
         lines.append("")
@@ -980,13 +988,10 @@ def write_readme(app: dict, components: list[dict], dest: Path) -> None:
         lines += [
             "`main` does not deploy. CI runs on the pull request.",
             "",
-            "Push a branch directly to `staging` to deploy staging. Do not merge `main` into `staging`.",
+            "Push the feature or fix branch directly to `staging`. Do not merge `main` into `staging`.",
             "",
             "```bash",
-            "git checkout staging",
-            "git pull",
-            "git merge main",
-            "git push",
+            "git push origin HEAD:staging",
             "```",
             "",
             "Open a pull request from `main` into `production` and merge it. That is the only way `main` deploys, and it deploys production.",
@@ -1350,6 +1355,34 @@ PROD_PROJECT="${{2:-{prod}}}"
     )
 
 
+def openspec_pin() -> str:
+    pins = ROOT / "scripts" / "pins.env"
+    for line in pins.read_text().splitlines():
+        if line.startswith("OPENSPEC_VERSION="):
+            return line.split("=", 1)[1].strip()
+    raise SystemExit("scripts/pins.env is missing OPENSPEC_VERSION")
+
+
+def write_devcontainer(dest: Path) -> None:
+    pin = openspec_pin()
+    folder = dest / ".devcontainer"
+    folder.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "name": "Opptra app",
+        "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+        "features": {
+            "ghcr.io/devcontainers/features/node:1": {"version": "22"},
+            "ghcr.io/devcontainers/features/python:1": {"version": "3.12"},
+            "ghcr.io/devcontainers/features/github-cli:1": {},
+        },
+        "postCreateCommand": (
+            "curl -LsSf https://astral.sh/uv/install.sh | sh && "
+            f"npm install -g @fission-ai/openspec@{pin}"
+        ),
+    }
+    (folder / "devcontainer.json").write_text(json.dumps(payload, indent=2) + "\n")
+
+
 def write_repo_hygiene(dest: Path) -> None:
     if not (dest / ".gitignore").is_file():
         (dest / ".gitignore").write_text(DEFAULT_GITIGNORE)
@@ -1399,6 +1432,7 @@ def phase_init_runtime(manifest_path: Path, dest: Path, overwrite: bool = False)
         shutil.copy2(manifest_path, dest / "service.yaml")
     write_repo_hygiene(dest)
     write_githooks(dest)
+    write_devcontainer(dest)
     for component in components:
         comp_dir = component_dir_for(dest, component)
         if comp_dir.resolve() != dest.resolve():
@@ -1432,6 +1466,7 @@ def phase_sync_infra(manifest_path: Path, dest: Path, ci_only: bool = False) -> 
         shutil.copy2(manifest_path, dest / "service.yaml")
     write_repo_hygiene(dest)
     write_githooks(dest)
+    write_devcontainer(dest)
     _, rules = selected(mapping, components)
     write_bundle(dest, rules)
     if not ci_only:

@@ -6,7 +6,7 @@ nav_order: 1
 
 # How an Opptra app is created, changed, and fixed
 
-The skills are already on each developer's machine. They come from `opptra/agent-skills`, installed once. Those skills clone `opptra/sdlc-resources` `main` when they need the generator and record that commit as `generator_sha` in `.sdlc/state.yaml`. Nobody keeps a checkout of `opptra/sdlc-resources`.
+The skills are already on each developer's machine. They come from `opptra/agent-skills`, installed once. Those skills check out the `generator_sha` recorded in `.sdlc/state.yaml` when they need the generator. They clone `opptra/sdlc-resources` `main` only when that field is missing, or when the developer asks to upgrade the generator. A phase records the commit it ran. Nobody keeps a checkout of `opptra/sdlc-resources`.
 
 If the sentence does not name a skill, use `opptra`. It only picks the route:
 
@@ -18,8 +18,9 @@ If the sentence does not name a skill, use `opptra`. It only picks the route:
 | Database, bucket, queue, secret, plain environment variable, job, cron, region, or workload | `change-app` |
 | New product behavior | `feature` |
 | Broken or incorrect behavior | `bug` |
+| Am I set up | `doctor` |
 
-A capability change and a product change are two pull requests. `change-app` goes first. A feature is `express` when it is one file (test and pull request, no OpenSpec), `standard` when it needs an OpenSpec, or `migration` when a local plan already decided the shape. After the plan is approved, `feature` and `bug` write `.sdlc/intent.yaml` so a new chat continues. That directory is gitignored.
+A capability change and a product change are two pull requests. `change-app` goes first, in the same chat. The agent opens the infra pull request and writes product code only after the developer says that pull request has merged. A feature is `express` when it is one file (test and pull request, no OpenSpec), `standard` when it needs an OpenSpec, or `migration` when a local plan already decided the shape. After the plan is approved, `feature` and `bug` write `.sdlc/intent.yaml` so a new chat continues. That directory is gitignored. When the infra pull request is waiting, `next_step` is `wait-for-infra`.
 
 `main` is the default branch and does not deploy. A direct push to `staging` deploys staging. Developers push there without a pull request. `main` is not merged into `staging`. A pull request from `main` into `production` deploys production.
 
@@ -29,12 +30,12 @@ A capability change and a product change are two pull requests. `change-app` goe
 |---|---|---|---|
 | Identity project `opptra-sdlc-ci` and the Workload Identity pool `opptra-github` | Once for the company | Platform owner | [gcp-bootstrap.md](gcp-bootstrap.md). The pool already exists. Do not create a second one. |
 | Staging project `opptra-staging`, state buckets, Artifact Registry repo `apps`, billing budgets | Once for the company | Platform owner | [gcp-bootstrap.md](gcp-bootstrap.md). |
-| `opptra/sdlc-resources` on GitHub `main` | Once for the company | Platform owner | This repo. A phase records the commit it ran as `generator_sha`. |
+| `opptra/sdlc-resources` on GitHub | Once for the company | Platform owner | This repo. A phase records the commit it ran as `generator_sha`. Later runs reuse that commit until someone asks to upgrade. |
 | `opptra/agent-skills` linked into Cursor and Claude | Once per person | Each developer | The skills repo. `fetch-skill` updates them. The route banner prints that commit. |
 | Linear issue | Every new app, feature, and bug | The person who wants the work | Linear. The issue names users, outcome, production project, and who can sign in. A bug also includes steps, expected result, and actual result. |
-| Empty GitHub repo in `opptra` | Once per app | The developer | GitHub. The agent does not create it. |
-| `main`, `staging`, and `production` branches | Once per app | The developer, after the generator has written the files | `staging` and `production` are created from `main`. |
-| GitHub environments `staging` and `production`, and the four Actions variables | Once per app | Repository admin | [bind.md](bind.md). Add a required reviewer on `production` when the plan allows it. |
+| Private GitHub repo in `opptra` | Once per app, after `make dev` passes | The agent, after the developer says yes | `gh repo create opptra/<name> --private`. The agent does not create it before that yes. |
+| `main`, `staging`, and `production` branches | Once per app, in the same yes | The agent | `staging` and `production` are created from `main` and pushed. |
+| GitHub environments `staging` and `production`, and the four Actions variables | Once per app | The agent creates the two environments. A repository admin sets a required reviewer on `production` when the plan allows it. The Actions variables come from the bind scripts. | [bind.md](bind.md). |
 | Staging deployer | Once per app | Developer, when they can change IAM in `opptra-staging` | Run `scripts/bind-staging.sh`, then the two `gh variable set` commands it prints. |
 | Production deployer | Once per app | Someone who can change IAM in `prod_project` | The developer sends them `scripts/bind-production.sh`. They run it and set the two production variables. |
 | Branch protection | Once per app | Platform owner | An organization ruleset protects `main` and `production`. `staging` is left open so a push can deploy it. |
@@ -44,16 +45,17 @@ A capability change and a product change are two pull requests. `change-app` goe
 
 ```mermaid
 flowchart TD
-  A[Requester opens a Linear issue] --> B[Developer creates an empty opptra repo]
-  B --> C[Developer asks the create-app skill and pastes the issue]
-  C --> D[Skill recommends archetype and auth]
-  D --> E{Developer agrees?}
-  E -->|No, or nothing fits| F[Stop. No files written]
-  E -->|Yes| G[Skill clones opptra/sdlc-resources main, writes service.yaml, runs the generator]
-  G --> H[Folder has code, passing tests, rules, and only the CI and deploy this app needs]
-  H --> I[Developer pushes main and creates staging and production from main]
-  I --> J[Admin creates GitHub environments. Developer binds staging. Production bind goes to someone with production IAM]
-  J --> K[App is ready. First product change is a feature]
+  A[Requester opens a Linear issue] --> B[Developer asks the create-app skill]
+  B --> C[Skill recommends archetype and auth]
+  C --> D{Developer agrees?}
+  D -->|No, or nothing fits| E[Stop. No files written]
+  D -->|Yes| F[Skill checks out the recorded generator, or main when none is recorded, and runs the generator]
+  F --> G[make dev passes on the laptop]
+  G --> H{Developer says yes to a private opptra repo?}
+  H -->|No| I[Stop. The app stays local]
+  H -->|Yes| J[Agent creates the repo, pushes main staging and production, creates the two GitHub environments]
+  J --> K[Developer binds staging. Production bind goes to someone with production IAM]
+  K --> L[App is ready. First product change is a feature]
 ```
 
 The health check or entrypoint test is already green. Nothing has deployed yet.
@@ -80,7 +82,7 @@ flowchart TD
   P --> Q[Developer moves the Linear issue to Done]
 ```
 
-A change to `infra/`, workflows, or `service.yaml` is a `change-app` pull request. It is not mixed into the feature. `express` skips the OpenSpec and still opens one pull request into `main`.
+A change to `infra/`, workflows, or `service.yaml` is a `change-app` pull request. It is not mixed into the feature. The agent opens that pull request in the same chat and waits until the developer says it has merged. `express` skips the OpenSpec and still opens one pull request into `main`. After either pull request into `main`, the agent prints the ship card and does not push `staging` unless asked.
 
 A deploy that mounts secrets creates the Secret Manager shells first. If a mounted secret has no version, the action stops and lists the ids. Add a version in Secret Manager and re-run the workflow. The value is not committed. Cloud Run mounts `latest` on that next run.
 
