@@ -32,17 +32,23 @@ def prefixed_name(prefix: str, app_name: str, raw_name: str) -> str:
     return f"{prefix}-{clean}"
 
 
-def secret_resource_id(prefix: str, raw_name: str) -> str:
+def secret_resource_id(
+    prefix: str,
+    raw_name: str,
+    secret_map: dict[str, str] | None = None,
+) -> str:
     """Secret Manager id for one environment variable.
 
     Job and service names go through prefixed_name, which turns underscores
     into hyphens because Cloud Run rejects underscores. A secret must stay
     the variable name plus the app prefix, so a person looking at
     FRESHDESK_CUSTOMERCARE_API_KEY creates cx-FRESHDESK_CUSTOMERCARE_API_KEY.
-    The job name is not part of the id. Using it produced a third name that
-    matched neither the variable nor the secret.
+    When brownfield apps import existing unprefixed secrets via secret_map,
+    the explicit secret_map[raw_name] ID is returned.
     """
     name = str(raw_name).strip()
+    if isinstance(secret_map, dict) and name in secret_map and str(secret_map[name]).strip():
+        return str(secret_map[name]).strip()
     if not prefix or name == prefix or name.startswith(f"{prefix}-"):
         return name
     return f"{prefix}-{name}"
@@ -96,6 +102,8 @@ ALLOWED_COMPONENT_KEYS = {
     "bucket",
     "queue",
     "secrets",
+    "secret_map",
+    "legacy_service_name",
     "env",
     "alerts",
     "run_tests",
@@ -326,6 +334,10 @@ def _normalize_component_fields(comp: dict, default_region: str = "asia-south1")
     comp.setdefault("alerts", False)
     comp.setdefault("run_tests", True)
     comp.setdefault("run_lint", True)
+    if isinstance(comp.get("secret_map"), dict):
+        for s_key in comp["secret_map"]:
+            if s_key not in comp["secrets"]:
+                comp["secrets"].append(s_key)
     if comp.get("receiver") and isinstance(comp["receiver"], dict):
         recv = comp["receiver"]
         if recv.get("queue") and not comp.get("queue"):
@@ -481,6 +493,19 @@ def check(data: dict) -> list[str]:
         for sec in component.get("secrets", []):
             if SECRET_ID.fullmatch(str(sec)) is None:
                 errors.append(f"{cname}: secret {sec!r} must be an environment variable name")
+        secret_map = component.get("secret_map")
+        if secret_map is not None:
+            if not isinstance(secret_map, dict):
+                errors.append(f"{cname}: secret_map must be a mapping of ENV_VAR to GCP secret ID")
+            else:
+                for k, v in secret_map.items():
+                    if SECRET_ID.fullmatch(str(k)) is None:
+                        errors.append(f"{cname}: secret_map key {k!r} must be an environment variable name")
+                    if not str(v).strip() or " " in str(v):
+                        errors.append(f"{cname}: secret_map value for {k!r} must be a non-empty secret ID")
+        legacy_svc = component.get("legacy_service_name")
+        if legacy_svc is not None and NAME.fullmatch(str(legacy_svc)) is None:
+            errors.append(f"{cname}: legacy_service_name {legacy_svc!r} must be a lowercase slug")
         env = component.get("env")
         if env is not None and not isinstance(env, dict):
             errors.append(f"{cname}: env must be a mapping of variable name to value")

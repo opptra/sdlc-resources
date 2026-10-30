@@ -52,7 +52,10 @@ def main(argv: list[str] | None = None) -> int:
     app_name = str(manifest.get("app_name") or manifest["name"])
     prefix = str(manifest.get("prefix") or app_name)
     comp_name = str(manifest["name"])
-    if comp_name.startswith(f"{prefix}-") or comp_name.startswith(f"{app_name}-") or comp_name in {prefix, app_name}:
+    legacy_svc = str(manifest.get("legacy_service_name") or "").strip()
+    if legacy_svc and args.environment == "prod":
+        resource_name = legacy_svc
+    elif comp_name.startswith(f"{prefix}-") or comp_name.startswith(f"{app_name}-") or comp_name in {prefix, app_name}:
         resource_name = comp_name
     else:
         resource_name = f"{prefix}-{comp_name}"

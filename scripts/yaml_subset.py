@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 
 _INT_RE = re.compile(r"^-?[0-9]+$")
+_FLOAT_RE = re.compile(r"^-?[0-9]+\.[0-9]+$")
 
 
 def _strip_comment(raw: str) -> str:
@@ -92,6 +93,8 @@ def _parse_scalar(text: str):
         return None
     if _INT_RE.fullmatch(val):
         return int(val)
+    if _FLOAT_RE.fullmatch(val):
+        return float(val)
     return val
 
 
@@ -143,7 +146,22 @@ def _parse_dict(lines: list[tuple[int, str]], index: int, indent: int):
         key = key.strip().strip("\"'")
         rest = rest.strip()
         index += 1
-        if rest == "":
+        if rest in {"|", "|-", ">", ">-"}:
+            block_lines: list[str] = []
+            block_indent: int | None = None
+            while index < len(lines) and lines[index][0] > level:
+                b_indent, b_text = lines[index]
+                if block_indent is None:
+                    block_indent = b_indent
+                pad = " " * max(0, b_indent - (block_indent or b_indent))
+                block_lines.append(pad + b_text)
+                index += 1
+            joiner = "\n" if rest.startswith("|") else " "
+            joined = joiner.join(block_lines)
+            if not rest.endswith("-") and joined:
+                joined += "\n"
+            result[key] = joined
+        elif rest == "":
             if index < len(lines) and lines[index][0] > level:
                 child, index = _parse_block(lines, index, lines[index][0])
                 result[key] = child

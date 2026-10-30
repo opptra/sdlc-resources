@@ -202,6 +202,19 @@
               "pattern": "^[A-Za-z][A-Za-z0-9_-]{1,80}$"
             }
           },
+          "secret_map": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,100}$"
+            },
+            "description": "Optional brownfield map of environment variable name to existing GCP Secret Manager secret ID (e.g. SLACK_BOT_TOKEN: slack-bot-token)."
+          },
+          "legacy_service_name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{1,48}$",
+            "description": "Optional brownfield Cloud Run service name override when importing an existing unprefixed live service."
+          },
           "env": {
             "type": "object",
             "additionalProperties": { "type": "string" },

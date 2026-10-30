@@ -71,7 +71,10 @@ def _check_resource_prefixes(manifest_data: dict, normalized_data: dict, repo_di
             rname = str(recv["name"]).replace("_", "-")
             if not rname.startswith(valid_prefixes):
                 unprefixed.append(f"receiver:{recv['name']}")
+        secret_map = comp.get("secret_map") if isinstance(comp.get("secret_map"), dict) else {}
         for s in comp.get("secrets", []):
+            if str(s) in secret_map:
+                continue
             sname = str(s).replace("_", "-")
             if not sname.startswith(valid_prefixes):
                 unprefixed.append(f"secret:{s}")
@@ -84,7 +87,7 @@ def _check_resource_prefixes(manifest_data: dict, normalized_data: dict, repo_di
             f" (+{len(unprefixed) - 6} more)" if len(unprefixed) > 6 else ""
         )
         return False, summary, unprefixed
-    return True, f"prefix='{prefix}' applied to all jobs, services, queues, and secrets", []
+    return True, f"prefix='{prefix}' applied to all jobs, services, queues, and secrets (or mapped via secret_map)", []
 
 
 def _git_branches(repo_dir: Path) -> list[str]:
@@ -205,24 +208,28 @@ def inspect_repo(repo_dir: Path) -> dict:
         else ""
     )
     combined_rules_text = agents_text + "\n" + claude_text
+    has_managed_always = "<!-- sdlc-rule: always -->" in combined_rules_text
 
     rule_pillars = {
         "5.1_tdd": {
             "title": "Test-Driven Development (TDD)",
             "ok": (
-                "uv run pytest" in combined_rules_text
+                has_managed_always
+                or "uv run pytest" in combined_rules_text
                 or "test-first" in combined_rules_text.lower()
                 or "failing test" in combined_rules_text.lower()
             ),
             "current": "Present"
             if (
-                "uv run pytest" in combined_rules_text
+                has_managed_always
+                or "uv run pytest" in combined_rules_text
                 or "test-first" in combined_rules_text.lower()
             )
             else "Missing",
             "action": "Keep TDD & component test commands"
             if (
-                "uv run pytest" in combined_rules_text
+                has_managed_always
+                or "uv run pytest" in combined_rules_text
                 or "test-first" in combined_rules_text.lower()
             )
             else "Add TDD rule and component test commands",
@@ -230,20 +237,29 @@ def inspect_repo(repo_dir: Path) -> dict:
         "5.2_commit_pr_github": {
             "title": "Commit, PR & GitHub Branch Flow",
             "ok": (
-                "feat: <ticket-id>" in combined_rules_text
-                and "staging" in combined_rules_text
-                and "separate pull requests" in combined_rules_text
+                has_managed_always
+                or (
+                    "feat: <ticket-id>" in combined_rules_text
+                    and "staging" in combined_rules_text
+                    and "separate pull requests" in combined_rules_text
+                )
             ),
             "current": "Complete"
             if (
-                "feat: <ticket-id>" in combined_rules_text
-                and "staging" in combined_rules_text
+                has_managed_always
+                or (
+                    "feat: <ticket-id>" in combined_rules_text
+                    and "staging" in combined_rules_text
+                )
             )
             else ("Partial" if "pull request" in combined_rules_text.lower() else "Missing"),
             "action": "None"
             if (
-                "feat: <ticket-id>" in combined_rules_text
-                and "staging" in combined_rules_text
+                has_managed_always
+                or (
+                    "feat: <ticket-id>" in combined_rules_text
+                    and "staging" in combined_rules_text
+                )
             )
             else "Sync commit/branch format, staging push, and infra PR split rules",
         },
@@ -298,12 +314,21 @@ def inspect_repo(repo_dir: Path) -> dict:
         },
         "5.7_logging_and_exit_codes": {
             "title": "Structured JSON Logging & Job Exit Codes",
-            "ok": "severity, message, service, and environment" in combined_rules_text,
+            "ok": (
+                "<!-- sdlc-rule: python -->" in combined_rules_text
+                or "severity, message, service, and environment" in combined_rules_text
+            ),
             "current": "Present"
-            if "severity, message, service, and environment" in combined_rules_text
+            if (
+                "<!-- sdlc-rule: python -->" in combined_rules_text
+                or "severity, message, service, and environment" in combined_rules_text
+            )
             else "Missing",
             "action": "None"
-            if "severity, message, service, and environment" in combined_rules_text
+            if (
+                "<!-- sdlc-rule: python -->" in combined_rules_text
+                or "severity, message, service, and environment" in combined_rules_text
+            )
             else "Add JSON stdout logging & non-zero 429/5xx job exit rules",
         },
         "5.8_data_and_warehouse": {
@@ -311,13 +336,19 @@ def inspect_repo(repo_dir: Path) -> dict:
             "ok": True
             if not detected_capabilities
             else (
-                "prevent_destroy" in combined_rules_text
+                "<!-- sdlc-rule: database -->" in combined_rules_text
+                or "<!-- sdlc-rule: firestore -->" in combined_rules_text
+                or "<!-- sdlc-rule: bigquery -->" in combined_rules_text
+                or "prevent_destroy" in combined_rules_text
                 or "locks/{job}" in combined_rules_text
                 or "currencies" in combined_rules_text
             ),
             "current": "Present"
             if (
-                "prevent_destroy" in combined_rules_text
+                "<!-- sdlc-rule: database -->" in combined_rules_text
+                or "<!-- sdlc-rule: firestore -->" in combined_rules_text
+                or "<!-- sdlc-rule: bigquery -->" in combined_rules_text
+                or "prevent_destroy" in combined_rules_text
                 or "locks/{job}" in combined_rules_text
                 or "currencies" in combined_rules_text
                 or not detected_capabilities
@@ -325,7 +356,10 @@ def inspect_repo(repo_dir: Path) -> dict:
             else "Missing for detected data store",
             "action": "None"
             if (
-                "prevent_destroy" in combined_rules_text
+                "<!-- sdlc-rule: database -->" in combined_rules_text
+                or "<!-- sdlc-rule: firestore -->" in combined_rules_text
+                or "<!-- sdlc-rule: bigquery -->" in combined_rules_text
+                or "prevent_destroy" in combined_rules_text
                 or "locks/{job}" in combined_rules_text
                 or "currencies" in combined_rules_text
                 or not detected_capabilities

@@ -58,7 +58,7 @@ def render_bundle(names: list[str]) -> tuple[str, dict[str, str]]:
     mdc_files: dict[str, str] = {}
     for name in names:
         body = rule_text(name)
-        sections.append(f"## {name}\n\n{body}")
+        sections.append(f"<!-- sdlc-rule: {name} -->\n## {name}\n\n{body}")
         mdc_files[f"{name}.mdc"] = cursor_rule(name, body)
     sections.append(f"{END_MARKER}\n")
     return "\n".join(sections), mdc_files

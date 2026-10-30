@@ -402,3 +402,148 @@ def test_removed_capability_rule_file_is_deleted() -> None:
         assert not (rules / "firestore.mdc").exists()
         assert (rules / "always.mdc").is_file()
         assert (rules / "local.mdc").read_text() == "keep\n"
+
+
+def test_non_destructive_init_runtime_and_infra_preserves_imports_and_plans() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        dest = Path(tmp) / "app"
+        comp_dir = dest / "components" / "console"
+        comp_dir.mkdir(parents=True)
+        (comp_dir / "MIGRATION_PLAN.md").write_text("# Keep this plan\n")
+
+        subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "sdlc.py"),
+                "init-runtime",
+                str(FIXTURE),
+                str(dest),
+                "--overwrite",
+            ],
+            check=True,
+        )
+        assert (comp_dir / "MIGRATION_PLAN.md").read_text() == "# Keep this plan\n"
+
+        infra_dir = comp_dir / "infra"
+        infra_dir.mkdir(parents=True, exist_ok=True)
+        (infra_dir / "imports.tf").write_text("# user confirmed imports\n")
+        (infra_dir / "imports.tf.example").write_text("# generated import examples\n")
+
+        subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "sdlc.py"),
+                "sync-infra",
+                str(FIXTURE),
+                str(dest),
+            ],
+            check=True,
+        )
+        assert (infra_dir / "imports.tf").read_text() == "# user confirmed imports\n"
+        assert (infra_dir / "imports.tf.example").read_text() == "# generated import examples\n"
+        assert (infra_dir / "main.tf").is_file()
+
+
+def test_brownfield_secret_map_legacy_service_and_propose_manifest() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp) / "legacy-analytics"
+        repo.mkdir(parents=True)
+        (repo / "Dockerfile").write_text(
+            'FROM python:3.12-slim\nCMD ["uvicorn", "app.main:app", "--port", "8080"]\n'
+        )
+        (repo / ".env.example").write_text(
+            "BATCH_LIMIT=100\nSLACK_WEBHOOK_TOKEN=replace-me\n"
+        )
+        (repo / "cloudbuild.yaml").write_text(
+            "substitutions:\n"
+            "  _REGION: asia-southeast1\n"
+            "  _PROJECT_ID: opptra-analytics-prod\n"
+            "steps:\n"
+            "  - name: gcr.io/google.com/cloudsdktool/cloud-sdk\n"
+            "    args:\n"
+            "      - gcloud\n"
+            "      - run\n"
+            "      - deploy\n"
+            "      - analytics-portal\n"
+            "      - --region=${_REGION}\n"
+            "      - --set-secrets=DASHBOARD_TOKEN=legacy-dashboard-token:latest\n"
+        )
+
+        prop_res = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "sdlc.py"),
+                "discover-infra",
+                str(repo),
+                "--propose-manifest",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        manifest_path = repo / "service.yaml"
+        manifest_path.write_text(prop_res.stdout)
+
+        check_res = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "check", str(manifest_path)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert check_res.returncode == 0, check_res.stderr
+
+        subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "sdlc.py"),
+                "sync-infra",
+                str(manifest_path),
+                str(repo),
+            ],
+            check=True,
+        )
+        subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "sdlc.py"),
+                "discover-infra",
+                str(repo),
+                "--write-imports",
+                str(manifest_path),
+            ],
+            check=True,
+        )
+
+        main_tf = (repo / "infra" / "main.tf").read_text()
+        imports_tf = (repo / "infra" / "imports.tf.example").read_text()
+        assert '"legacy-dashboard-token"' in main_tf
+        assert 'module.secrets.by_id["legacy-dashboard-token"]' in main_tf
+        assert "projects/opptra-analytics-prod/secrets/legacy-dashboard-token" in imports_tf
+        assert "projects/opptra-analytics-prod/locations/asia-southeast1/services/analytics-portal" in imports_tf
+
+        status_res = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "status", str(repo), "--json", "--check"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        report = json.loads(status_res.stdout)
+        assert report["aligned"] is True
+        sec_16 = [s for s in report["sections_14"] if s["id"] == 16][0]
+        assert sec_16["status"] == "Up to the mark"
+
+
+def test_yaml_subset_multiline_and_floats() -> None:
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from yaml_subset import parse
+
+    doc = parse(
+        "name: demo\n"
+        "threshold: 0.85\n"
+        "purpose: |\n"
+        "  Line one of purpose.\n"
+        "  Line two of purpose.\n"
+    )
+    assert doc["name"] == "demo"
+    assert doc["threshold"] == 0.85
+    assert doc["purpose"] == "Line one of purpose.\nLine two of purpose.\n"
