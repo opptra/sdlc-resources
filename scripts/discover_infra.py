@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from check_manifest import normalize, prefixed_name
+from check_manifest import normalize, prefixed_name, secret_resource_id
 from yaml_subset import dump, parse
 
 _GCLOUD_SVC_RE = re.compile(
@@ -24,8 +24,10 @@ _FLAG_REGION_RE = re.compile(r"--region[=\s]+([a-z0-9-]+)")
 _FLAG_MEM_RE = re.compile(r"--memory[=\s]+([0-9]+[GMK]i?)")
 _FLAG_TIMEOUT_RE = re.compile(r"--(?:task-)?timeout[=\s]+([0-9]+)s?")
 _FLAG_SECRETS_RE = re.compile(r"--(?:set|update)-secrets[=\s]+[\"']?([^\"'\s\\]+)")
-_SECRET_NAME_RE = re.compile(r"=([a-zA-Z0-9_-]+):")
+_SECRET_NAME_RE = re.compile(r"([A-Za-z0-9_]+)=([a-zA-Z0-9_-]+):")
 _VAR_ASSIGN_RE = re.compile(r"^([A-Z_][A-Z0-9_]*)=[\"']?([^\"'\n#]+)[\"']?", re.M)
+_DOCKER_CMD_RE = re.compile(r"^\s*(?:CMD|ENTRYPOINT)\s+(.*)$", re.M)
+_SENSITIVE_ENV_RE = re.compile(r"(?:SECRET|TOKEN|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|CREDENTIAL|AUTH_KEY|DSN)$", re.I)
 
 
 def _clean_var_val(val: str) -> str:
@@ -51,6 +53,7 @@ def discover_repo(repo_dir: Path) -> dict:
         for p in list(repo_dir.glob("deploy/**/*.sh"))
         + list(repo_dir.glob("scripts/**/*.sh"))
         + list(repo_dir.glob("*.sh"))
+        + list(repo_dir.glob("**/cloudbuild.y*ml"))
         if ".venv" not in p.parts and "node_modules" not in p.parts and p.name not in {"bind-repo.sh", "bind-staging.sh", "bind-production.sh"}
     ]
     dockerfiles = [
@@ -62,8 +65,54 @@ def discover_repo(repo_dir: Path) -> dict:
     services: list[dict] = []
     jobs: list[dict] = []
     secrets_found: list[str] = []
+    secret_map_found: dict[str, str] = {}
+    plain_env_found: dict[str, str] = {}
+    dockerfile_commands: dict[str, str] = {}
     regions_found: list[str] = []
     prod_project = "opptra-applications"
+
+    for df in dockerfiles:
+        df_text = df.read_text(errors="ignore")
+        rel_df = str(df.relative_to(repo_dir))
+        cmds = _DOCKER_CMD_RE.findall(df_text)
+        if cmds:
+            raw_cmd = cmds[-1].strip()
+            if raw_cmd.startswith("[") and raw_cmd.endswith("]"):
+                try:
+                    parsed_cmd = json.loads(raw_cmd)
+                    if isinstance(parsed_cmd, list):
+                        raw_cmd = " ".join(str(x) for x in parsed_cmd)
+                except ValueError:
+                    pass
+            dockerfile_commands[rel_df] = raw_cmd
+
+    env_example = repo_dir / ".env.example"
+    if env_example.is_file():
+        for line in env_example.read_text(errors="ignore").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            k, _, v = stripped.partition("=")
+            k = k.strip()
+            v = v.strip().strip("\"'")
+            if not k or k in {
+                "APP_ENV",
+                "SERVICE_NAME",
+                "RESOURCE_PREFIX",
+                "GOOGLE_CLOUD_PROJECT",
+                "DATABASE_URL",
+                "FIRESTORE_EMULATOR_HOST",
+                "BIGQUERY_PROJECT",
+                "BIGQUERY_DATASET",
+                "GCS_BUCKET_NAME",
+                "CLOUD_TASKS_QUEUE",
+            }:
+                continue
+            if _SENSITIVE_ENV_RE.search(k) or v == "replace-me":
+                if k not in secrets_found:
+                    secrets_found.append(k)
+            else:
+                plain_env_found[k] = v
 
     for sh in shell_files:
         raw = sh.read_text(errors="ignore")
@@ -71,18 +120,24 @@ def discover_repo(repo_dir: Path) -> dict:
         sh_vars = {
             m.group(1): _clean_var_val(m.group(2)) for m in _VAR_ASSIGN_RE.finditer(raw)
         }
+        for sub_m in re.finditer(r"^\s*(_[A-Z0-9_]+):\s*[\"']?([^\"'\n#]+)[\"']?", raw, re.M):
+            sh_vars[sub_m.group(1)] = _clean_var_val(sub_m.group(2))
         prod_m = re.search(r'prod\)\s+SERVICE=["\']?([a-zA-Z0-9_-]+)["\']?', raw)
         if prod_m:
             sh_vars["SERVICE"] = prod_m.group(1)
-        for proj_key in ("PROJECT_ID", "PROJECT"):
+        for proj_key in ("PROJECT_ID", "PROJECT", "_PROJECT_ID"):
             if proj_key in sh_vars and not sh_vars[proj_key].startswith("$"):
                 prod_project = sh_vars[proj_key]
+        if sh.name.startswith("cloudbuild."):
+            joined = re.sub(r"\n\s*-\s*[\"']?([^\"'\n]+)[\"']?", r" \1", joined)
         resolved = _resolve_shell_vars(joined, sh_vars)
         rel = str(sh.relative_to(repo_dir))
 
-        for sec_id in _extract_secrets(raw):
+        for env_var, sec_id in _extract_secret_pairs(raw):
             if sec_id not in secrets_found:
                 secrets_found.append(sec_id)
+            if env_var and sec_id:
+                secret_map_found[env_var] = sec_id
 
         for loop_m in re.finditer(r"for\s+job\s+in\s+([^;\n]+);", raw):
             for tok in loop_m.group(1).split():
@@ -266,27 +321,141 @@ def discover_repo(repo_dir: Path) -> dict:
         "has_service_yaml": has_existing_manifest,
         "has_ui": has_ui,
         "dockerfiles": [str(d.relative_to(repo_dir)) for d in dockerfiles],
+        "dockerfile_commands": dockerfile_commands,
         "shell_scripts": [str(s.relative_to(repo_dir)) for s in shell_files],
         "legacy_hosts": legacy_hosts,
         "services": services,
         "jobs": jobs,
         "secrets": secrets_found,
+        "secret_map": secret_map_found,
+        "plain_env": plain_env_found,
         "stores": stores,
         "resources_table": resources_table,
     }
 
 
-def _extract_secrets(body: str) -> list[str]:
-    found: list[str] = []
+def _extract_secret_pairs(body: str) -> list[tuple[str, str]]:
+    found: list[tuple[str, str]] = []
     for m in _FLAG_SECRETS_RE.finditer(body):
         raw = m.group(1)
         for pair in raw.split(","):
             sm = _SECRET_NAME_RE.search(pair)
             if sm:
-                sec = sm.group(1).strip()
-                if sec and not sec.startswith("$") and sec not in found:
-                    found.append(sec)
+                env_var = sm.group(1).strip()
+                sec = sm.group(2).strip()
+                if sec and not sec.startswith("$") and (env_var, sec) not in found:
+                    found.append((env_var, sec))
     return found
+
+
+def _extract_secrets(body: str) -> list[str]:
+    return [sec for _, sec in _extract_secret_pairs(body)]
+
+
+def propose_manifest(report: dict) -> str:
+    app_name = report["app_name"]
+    prefix = app_name[:20].rstrip("-")
+    default_region = report["default_region"]
+    stores = report.get("stores", [])
+    db = "none"
+    for candidate in ("postgres", "firestore", "bigquery"):
+        if candidate in stores:
+            db = candidate
+            break
+    bucket = "private" if "bucket" in stores else "none"
+    secret_map = report.get("secret_map", {})
+    secrets = list(secret_map.keys()) if secret_map else list(report.get("secrets", []))
+    plain_env = report.get("plain_env", {})
+
+    components: list[dict] = []
+    for svc in report.get("services", []):
+        raw_svc_name = str(svc["name"])
+        parts = ["ui", "api"] if report.get("has_ui") else ["api"]
+        comp: dict = {
+            "name": raw_svc_name[:40].rstrip("-"),
+            "archetype": "cloud-run-service",
+            "region": str(svc.get("region", default_region)),
+            "path": ".",
+            "auth": str(svc.get("auth", "iap")),
+            "database": db,
+            "bucket": bucket,
+            "parts": parts,
+        }
+        if not raw_svc_name.startswith(f"{prefix}-") and raw_svc_name != prefix:
+            comp["legacy_service_name"] = raw_svc_name
+        if secrets:
+            comp["secrets"] = secrets
+        if secret_map:
+            comp["secret_map"] = secret_map
+        if plain_env:
+            comp["env"] = plain_env
+        components.append(comp)
+
+    if report.get("jobs"):
+        job_entries = []
+        for j in report["jobs"]:
+            jname = str(j["name"])
+            py_mod = jname.replace("-", "_")
+            job_entries.append(
+                {
+                    "name": jname,
+                    "command": f"python -m app.jobs.{py_mod}",
+                    "enabled": True,
+                    "timezone": "Asia/Kolkata",
+                    "schedules": [],
+                    "timeout_seconds": int(j.get("timeout_seconds", 1800)),
+                    "memory": str(j.get("memory", "1Gi")),
+                    "secrets": secrets,
+                }
+            )
+        comp = {
+            "name": f"{prefix}-jobs"[:40].rstrip("-"),
+            "archetype": "scheduled-jobs" if len(job_entries) > 1 else "cloud-run-job",
+            "region": str(report["jobs"][0].get("region", default_region)),
+            "path": ".",
+            "auth": "none",
+            "database": db,
+            "bucket": bucket,
+            "parts": ["job"],
+            "jobs": job_entries,
+        }
+        if secrets:
+            comp["secrets"] = secrets
+        if secret_map:
+            comp["secret_map"] = secret_map
+        if plain_env:
+            comp["env"] = plain_env
+        components.append(comp)
+
+    if not components:
+        parts = ["ui", "api"] if report.get("has_ui") else ["api"]
+        comp = {
+            "name": app_name[:40].rstrip("-"),
+            "archetype": "cloud-run-service",
+            "region": default_region,
+            "path": ".",
+            "auth": "iap" if "ui" in parts else "app-login",
+            "database": db,
+            "bucket": bucket,
+            "parts": parts,
+        }
+        if secrets:
+            comp["secrets"] = secrets
+        if secret_map:
+            comp["secret_map"] = secret_map
+        if plain_env:
+            comp["env"] = plain_env
+        components.append(comp)
+
+    manifest = {
+        "name": app_name,
+        "prefix": prefix,
+        "purpose": f"Service manifest for {app_name}.",
+        "prod_project": report.get("prod_project", "opptra-applications"),
+        "region": default_region,
+        "components": components,
+    }
+    return dump(manifest)
 
 
 def render_discovery_markdown(report: dict) -> str:
@@ -326,8 +495,10 @@ def write_imports_for_manifest(manifest_path: Path, dest: Path, project_id: str 
         infra_dir.mkdir(parents=True, exist_ok=True)
         region = str(comp.get("region", app["region"]))
         cname = str(comp["name"])
-        res_name = prefixed_name(prefix, app_name, cname)[:48].rstrip("-")
+        legacy_svc = str(comp.get("legacy_service_name") or "").strip()
+        res_name = (legacy_svc if legacy_svc else prefixed_name(prefix, app_name, cname))[:48].rstrip("-")
         sa_id = f"{res_name}-rt"[:28]
+        secret_map = comp.get("secret_map") if isinstance(comp.get("secret_map"), dict) else None
 
         blocks = by_infra_dir.setdefault(
             infra_dir,
@@ -364,8 +535,12 @@ def write_imports_for_manifest(manifest_path: Path, dest: Path, project_id: str 
                     f'  id = "projects/{prod}/locations/{region}/jobs/{slug}"',
                     "}",
                 ]
+        seen_secrets: set[str] = set()
         for sec in comp.get("secrets", []):
-            psec = prefixed_name(prefix, app_name, str(sec))
+            psec = secret_resource_id(prefix, str(sec), secret_map)
+            if psec in seen_secrets:
+                continue
+            seen_secrets.add(psec)
             blocks += [
                 "",
                 "import {",
@@ -390,6 +565,11 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="Path to service.yaml to generate infra/imports.tf.example files",
     )
+    parser.add_argument(
+        "--propose-manifest",
+        action="store_true",
+        help="Print a proposed service.yaml from discovered repo resources",
+    )
     args = parser.parse_args(argv)
 
     repo_dir = args.repo.resolve()
@@ -400,7 +580,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     report = discover_repo(repo_dir)
-    if args.json:
+    if args.propose_manifest:
+        print(propose_manifest(report), end="")
+    elif args.json:
         print(json.dumps(report, indent=2))
     else:
         print(render_discovery_markdown(report))

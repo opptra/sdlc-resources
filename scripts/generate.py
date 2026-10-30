@@ -124,8 +124,6 @@ def component_dir_for(dest: Path, component: dict) -> Path:
 
 
 def copy_skeleton(mapping: dict, component: dict, dest: Path, overwrite: bool = True) -> None:
-    if dest.exists() and overwrite:
-        shutil.rmtree(dest)
     dest.mkdir(parents=True, exist_ok=True)
     parts = set(component["parts"])
     for part in component["parts"]:
@@ -353,6 +351,11 @@ def write_component_manifest(app: dict, component: dict, dest: Path) -> None:
     if component.get("secrets"):
         secs = ", ".join(component["secrets"])
         lines.append(f"secrets: [{secs}]")
+    secret_map = component.get("secret_map")
+    if isinstance(secret_map, dict) and secret_map:
+        lines.append(dump({"secret_map": secret_map}).rstrip("\n"))
+    if component.get("legacy_service_name"):
+        lines.append(f"legacy_service_name: {component['legacy_service_name']}")
     env = component.get("env")
     if isinstance(env, dict) and env:
         lines.append(dump({"env": env}).rstrip("\n"))
@@ -384,11 +387,15 @@ def _plain_env_hcl(plain: dict) -> str:
     return f"  plain_env = {{\n{body}\n  }}\n"
 
 
-def _unique_secret_ids(prefix: str, names: list[str]) -> list[str]:
+def _unique_secret_ids(
+    prefix: str,
+    names: list[str],
+    secret_map: dict[str, str] | None = None,
+) -> list[str]:
     """Secret Manager ids for these environment variable names, in first-seen order."""
     secret_ids: list[str] = []
     for raw in names:
-        secret_id = secret_resource_id(prefix, str(raw))
+        secret_id = secret_resource_id(prefix, str(raw), secret_map)
         if secret_id not in secret_ids:
             secret_ids.append(secret_id)
     return secret_ids
@@ -422,8 +429,9 @@ def write_infra(mapping: dict, app: dict, component: dict, dest: Path) -> None:
     has_bucket = component.get("bucket", "none") == "private"
     raw_queue = component.get("queue")
     queue_name = prefixed_name(prefix, app_name, str(raw_queue)) if raw_queue else None
+    secret_map = component.get("secret_map") if isinstance(component.get("secret_map"), dict) else None
     # Keep the env var's underscores. prefixed_name is for Cloud Run names only.
-    secrets = [secret_resource_id(prefix, str(s)) for s in component.get("secrets", [])]
+    secrets = _unique_secret_ids(prefix, [str(s) for s in component.get("secrets", [])], secret_map)
     has_alerts = bool(component.get("alerts", False))
     receiver = component.get("receiver")
     jobs = component.get("jobs") or []
@@ -431,9 +439,19 @@ def write_infra(mapping: dict, app: dict, component: dict, dest: Path) -> None:
     if not module and not has_postgres and not has_firestore and not has_bucket:
         return
     infra = dest / "infra"
-    if infra.exists():
+    preserved_files: dict[str, str] = {}
+    if infra.is_dir():
+        for keep_name in ("imports.tf", "imports.tf.example"):
+            keep_path = infra / keep_name
+            if keep_path.is_file():
+                preserved_files[keep_name] = keep_path.read_text()
+        for custom_keep in infra.glob("*.keep.tf"):
+            if custom_keep.is_file():
+                preserved_files[custom_keep.name] = custom_keep.read_text()
         shutil.rmtree(infra)
-    infra.mkdir(parents=True)
+    infra.mkdir(parents=True, exist_ok=True)
+    for keep_name, keep_content in preserved_files.items():
+        (infra / keep_name).write_text(keep_content)
     copied_modules: set[str] = set()
 
     def module_source(name: str) -> str:
@@ -535,12 +553,12 @@ provider "google" {
                 for raw in job.get("secrets", []):
                     if str(raw) not in job_secret_names:
                         job_secret_names.append(str(raw))
-            jobs_hcl += _mounted_secret_ids_hcl(_unique_secret_ids(prefix, job_secret_names))
+            jobs_hcl += _mounted_secret_ids_hcl(_unique_secret_ids(prefix, job_secret_names, secret_map))
         elif module == "cloud-run-service":
             service_secret_names = [str(item) for item in component.get("secrets", [])]
             if service_secret_names:
                 jobs_hcl += f"  secrets             = {_hcl_string_list(service_secret_names)}\n"
-            jobs_hcl += _mounted_secret_ids_hcl(_unique_secret_ids(prefix, service_secret_names))
+            jobs_hcl += _mounted_secret_ids_hcl(_unique_secret_ids(prefix, service_secret_names, secret_map))
 
         blocks.append(
             f"""module "service" {{
@@ -654,7 +672,7 @@ provider "google" {
         )
         receiver_secret_names = [str(s) for s in receiver.get("secrets", [])]
         rsecrets = _hcl_string_list(receiver_secret_names)
-        receiver_mounts = _mounted_secret_ids_hcl(_unique_secret_ids(prefix, receiver_secret_names))
+        receiver_mounts = _mounted_secret_ids_hcl(_unique_secret_ids(prefix, receiver_secret_names, secret_map))
         queue_env = ""
         if queue_name:
             queue_env = (
@@ -992,6 +1010,8 @@ def write_readme(app: dict, components: list[dict], dest: Path) -> None:
             "",
             "```bash",
             "git push origin HEAD:staging",
+            "# Or if staging was previously pushed from another branch:",
+            "git push --force-with-lease origin HEAD:staging",
             "```",
             "",
             "Open a pull request from `main` into `production` and merge it. That is the only way `main` deploys, and it deploys production.",
@@ -1438,6 +1458,8 @@ def phase_init_runtime(manifest_path: Path, dest: Path, overwrite: bool = False)
         if comp_dir.resolve() != dest.resolve():
             copy_skeleton(mapping, component, comp_dir, overwrite=overwrite)
             write_component_manifest(app, component, comp_dir)
+        else:
+            copy_skeleton(mapping, component, comp_dir, overwrite=False)
     write_local_dev_files(app, components, dest)
 
 

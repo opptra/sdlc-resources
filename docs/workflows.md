@@ -6,7 +6,7 @@ nav_order: 1
 
 # How an Opptra app is created, changed, and fixed
 
-The skills are already on each developer's machine. They come from `opptra/agent-skills`, installed once. Those skills check out the `generator_sha` recorded in `.sdlc/state.yaml` when they need the generator. They clone `opptra/sdlc-resources` `main` only when that field is missing, or when the developer asks to upgrade the generator. A phase records the commit it ran. Nobody keeps a checkout of `opptra/sdlc-resources`.
+The skills are already on each developer's machine. They come from `opptra/agent-skills`, installed once via `./install.sh`. Those skills check out the `generator_sha` recorded in `.sdlc/state.yaml` from the local cache (`~/.cache/opptra/sdlc-resources.git`) when they need the generator. They fetch `opptra/sdlc-resources` `main` only when that field is missing, or when the developer asks to upgrade the generator. A phase records the commit it ran. Nobody keeps a manual checkout of `opptra/sdlc-resources` inside an app repo.
 
 If the sentence does not name a skill, use `opptra`. It only picks the route:
 
@@ -20,7 +20,7 @@ If the sentence does not name a skill, use `opptra`. It only picks the route:
 | Broken or incorrect behavior | `bug` |
 | Am I set up | `doctor` |
 
-A capability change and a product change are two pull requests. `change-app` goes first, in the same chat. The agent opens the infra pull request and writes product code only after the developer says that pull request has merged. A feature is `express` when it is one file (test and pull request, no OpenSpec), `standard` when it needs an OpenSpec, or `migration` when a local plan already decided the shape. After the plan is approved, `feature` and `bug` write `.sdlc/intent.yaml` so a new chat continues. That directory is gitignored. When the infra pull request is waiting, `next_step` is `wait-for-infra`.
+A capability change and a product change are two pull requests. `change-app` goes first, in the same chat. The agent opens the `infra/<ticket>-<slug>` pull request and can immediately cut `feat/<ticket>-<slug>` stacked on top of that infra branch (`next_step: code-stacked-on-infra`) so product code and local tests continue without waiting for the infra merge (or pause at `wait-for-infra` if the developer prefers). A feature is `express` when it is one file (test and pull request, no OpenSpec), `standard` when it needs an OpenSpec, or `migration` when a local plan already decided the shape. After the plan is approved, `feature` and `bug` write `.sdlc/intent.yaml` so a new chat continues. That directory is gitignored.
 
 `main` is the default branch and does not deploy. A direct push to `staging` deploys staging. Developers push there without a pull request. `main` is not merged into `staging`. A pull request from `main` into `production` deploys production.
 
