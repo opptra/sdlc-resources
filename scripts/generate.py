@@ -386,14 +386,27 @@ def write_component_manifest(app: dict, component: dict, dest: Path) -> None:
     if component.get("secrets"):
         secs = ", ".join(component["secrets"])
         lines.append(f"secrets: [{secs}]")
+    if component.get("existing_secrets"):
+        esecs = ", ".join(component["existing_secrets"])
+        lines.append(f"existing_secrets: [{esecs}]")
     secret_map = component.get("secret_map")
     if isinstance(secret_map, dict) and secret_map:
         lines.append(dump({"secret_map": secret_map}).rstrip("\n"))
     if component.get("legacy_service_name"):
         lines.append(f"legacy_service_name: {component['legacy_service_name']}")
+    if component.get("postgres_instance"):
+        lines.append(f"postgres_instance: {component['postgres_instance']}")
+    if component.get("postgres_secret"):
+        lines.append(f"postgres_secret: {component['postgres_secret']}")
+    if component.get("postgres_external"):
+        lines.append("postgres_external: true")
+    if component.get("bigquery_project"):
+        lines.append(f"bigquery_project: {component['bigquery_project']}")
     if component.get("bigquery_datasets"):
         bqd = ", ".join(str(d) for d in component["bigquery_datasets"])
         lines.append(f"bigquery_datasets: [{bqd}]")
+    if component.get("existing_bucket"):
+        lines.append(f"existing_bucket: {component['existing_bucket']}")
     if component.get("extra_roles"):
         roles = ", ".join(str(r) for r in component["extra_roles"])
         lines.append(f"extra_roles: [{roles}]")
@@ -444,20 +457,34 @@ def _unique_secret_ids(
     return secret_ids
 
 
-def _mounted_secret_ids_hcl(secret_ids: list[str]) -> str:
+def _mounted_secret_ids_hcl(
+    secret_ids: list[str],
+    preexisting_ids: set[str] | None = None,
+) -> str:
     """HCL for the secrets this workload's runtime account may read.
 
-    Referencing ``module.secrets.by_id`` makes the grant wait until the shell
-    exists. An empty list means this workload mounts nothing, so it does not
-    reference the secrets module.
+    Referencing ``module.secrets.by_id`` makes the grant wait until an app-owned
+    shell exists. Pre-existing shared secrets (``existing_secrets``) are passed
+    as direct string IDs so ``module.secrets`` does not attempt to create them.
     """
     if not secret_ids:
         return "  mounted_secret_ids = []\n"
+    pre = preexisting_ids or set()
     lines = ["  mounted_secret_ids = ["]
     for secret_id in secret_ids:
-        lines.append(f'    module.secrets.by_id["{secret_id}"],')
+        if secret_id in pre:
+            lines.append(f'    "{secret_id}",')
+        else:
+            lines.append(f'    module.secrets.by_id["{secret_id}"],')
     lines.append("  ]")
     return "\n".join(lines) + "\n"
+
+
+def _secret_map_hcl(secret_map: dict[str, str]) -> str:
+    body = "\n".join(
+        f"    {_hcl_map_key(key)} = {_hcl_quoted(value)}" for key, value in secret_map.items()
+    )
+    return f"  secret_map = {{\n{body}\n  }}\n"
 
 
 def write_infra(mapping: dict, app: dict, component: dict, dest: Path) -> None:
@@ -468,16 +495,35 @@ def write_infra(mapping: dict, app: dict, component: dict, dest: Path) -> None:
     prefix = str(app.get("prefix") or app_name)
     database = component.get("database", "none")
     has_postgres = database == "postgres"
+    postgres_instance = str(component.get("postgres_instance") or "").strip()
+    postgres_secret = str(component.get("postgres_secret") or "").strip()
+    postgres_external = bool(component.get("postgres_external", False))
+    creates_cloud_sql = has_postgres and not postgres_instance and not postgres_external
     has_firestore = database == "firestore"
     has_bigquery = database == "bigquery" or bool(component.get("bigquery"))
+    bigquery_project = str(component.get("bigquery_project") or "").strip()
     bigquery_datasets = [str(d) for d in component.get("bigquery_datasets", [])]
     extra_roles = [str(r) for r in component.get("extra_roles", [])]
-    has_bucket = component.get("bucket", "none") == "private"
+    existing_bucket = str(component.get("existing_bucket") or "").strip()
+    has_bucket = component.get("bucket", "none") == "private" or bool(existing_bucket)
+    creates_bucket = has_bucket and not existing_bucket
     raw_queue = component.get("queue")
     queue_name = prefixed_name(prefix, app_name, str(raw_queue)) if raw_queue else None
-    secret_map = component.get("secret_map") if isinstance(component.get("secret_map"), dict) else None
+    secret_map_raw = component.get("secret_map") if isinstance(component.get("secret_map"), dict) else {}
+    existing_secret_vars = {str(s) for s in component.get("existing_secrets", [])}
+    effective_secret_map: dict[str, str] = dict(secret_map_raw)
+    for es in existing_secret_vars:
+        if es not in effective_secret_map:
+            effective_secret_map[es] = es
+    secret_map = effective_secret_map if effective_secret_map else None
+    preexisting_secret_ids = {
+        secret_resource_id(prefix, s, secret_map) for s in existing_secret_vars
+    }
+    owned_secret_vars = [
+        str(s) for s in component.get("secrets", []) if str(s) not in existing_secret_vars
+    ]
     # Keep the env var's underscores. prefixed_name is for Cloud Run names only.
-    secrets = _unique_secret_ids(prefix, [str(s) for s in component.get("secrets", [])], secret_map)
+    secrets = _unique_secret_ids(prefix, owned_secret_vars, secret_map)
     has_alerts = bool(component.get("alerts", False))
     receiver = component.get("receiver")
     jobs = component.get("jobs") or []
@@ -542,7 +588,7 @@ provider "google" {
     (infra / "variables.tf").write_text(body)
 
     blocks: list[str] = [f"# {STAMP}"]
-    if has_postgres:
+    if creates_cloud_sql:
         blocks.append(
             f"""module "db" {{
   source = {module_source("cloud-sql")}
@@ -555,12 +601,17 @@ provider "google" {
 
     if module:
         auth_line = "  auth        = var.auth\n" if module == "cloud-run-service" else ""
-        sql_line = (
-            "  cloud_sql_instance = module.db.connection_name\n"
-            "  db_secret_id       = module.db.secret_id\n"
-            if has_postgres
-            else ""
-        )
+        if creates_cloud_sql:
+            sql_line = (
+                "  cloud_sql_instance = module.db.connection_name\n"
+                "  db_secret_id       = module.db.secret_id\n"
+            )
+        elif postgres_instance:
+            sql_line = f'  cloud_sql_instance = "{postgres_instance}"\n'
+            if postgres_secret:
+                sql_line += f'  db_secret_id       = "{postgres_secret}"\n'
+        else:
+            sql_line = ""
         jobs_hcl = ""
         if module == "cloud-run-job" and jobs:
             job_entries: list[str] = []
@@ -587,9 +638,24 @@ provider "google" {
             jobs_hcl = "  jobs = {\n" + "\n".join(job_entries) + "\n  }\n"
         # Mount each listed variable from <prefix>-<ENV_NAME>. The process reads the variable.
         jobs_hcl += f'  secret_prefix   = "{prefix}"\n'
-        if has_bucket:
+        if secret_map:
+            jobs_hcl += _secret_map_hcl(secret_map)
+        if existing_bucket:
+            jobs_hcl += f'  gcs_bucket_name = "{existing_bucket}"\n'
+        elif has_bucket:
             jobs_hcl += '  gcs_bucket_name = "${var.project_id}-${var.name}-assets"\n'
         plain = dict(component.get("env") or {})
+        if has_bigquery:
+            if bigquery_project and "BIGQUERY_PROJECT" not in plain:
+                plain["BIGQUERY_PROJECT"] = bigquery_project
+            if bigquery_datasets and "BIGQUERY_DATASET" not in plain:
+                first_ds = bigquery_datasets[0].replace(":", ".")
+                if "." in first_ds:
+                    ds_proj, ds_name = first_ds.split(".", 1)
+                    plain.setdefault("BIGQUERY_PROJECT", ds_proj)
+                    plain["BIGQUERY_DATASET"] = ds_name
+                else:
+                    plain["BIGQUERY_DATASET"] = first_ds
         if isinstance(secret_map, dict):
             for s_key, s_val in secret_map.items():
                 upper_key = str(s_key).upper().replace("-", "_")
@@ -603,12 +669,20 @@ provider "google" {
                 for raw in job.get("secrets", []):
                     if str(raw) not in job_secret_names:
                         job_secret_names.append(str(raw))
-            jobs_hcl += _mounted_secret_ids_hcl(_unique_secret_ids(prefix, job_secret_names, secret_map))
+            if not job_secret_names:
+                job_secret_names = [str(item) for item in component.get("secrets", [])]
+            jobs_hcl += _mounted_secret_ids_hcl(
+                _unique_secret_ids(prefix, job_secret_names, secret_map),
+                preexisting_secret_ids,
+            )
         elif module == "cloud-run-service":
             service_secret_names = [str(item) for item in component.get("secrets", [])]
             if service_secret_names:
                 jobs_hcl += f"  secrets             = {_hcl_string_list(service_secret_names)}\n"
-            jobs_hcl += _mounted_secret_ids_hcl(_unique_secret_ids(prefix, service_secret_names, secret_map))
+            jobs_hcl += _mounted_secret_ids_hcl(
+                _unique_secret_ids(prefix, service_secret_names, secret_map),
+                preexisting_secret_ids,
+            )
 
         blocks.append(
             f"""module "service" {{
@@ -622,65 +696,67 @@ provider "google" {
 {auth_line}{sql_line}{jobs_hcl}}}"""
         )
 
-    if has_postgres and module:
+    if (creates_cloud_sql or (postgres_instance and postgres_secret)) and module:
+        db_sec_expr = "module.db.secret_id" if creates_cloud_sql else f'"{postgres_secret}"'
+        db_conn_expr = "module.db.connection_name" if creates_cloud_sql else f'"{postgres_instance}"'
         blocks.append(
-            """resource "google_secret_manager_secret_iam_member" "db" {
+            f"""resource "google_secret_manager_secret_iam_member" "db" {{
   project   = var.project_id
-  secret_id = module.db.secret_id
+  secret_id = {db_sec_expr}
   role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${module.service.runtime_service_account}"
-}"""
+  member    = "serviceAccount:${{module.service.runtime_service_account}}"
+}}"""
         )
         if module == "cloud-run-service":
             blocks.append(
-                """resource "google_cloud_run_v2_job" "migrate" {
+                f"""resource "google_cloud_run_v2_job" "migrate" {{
   depends_on = [google_secret_manager_secret_iam_member.db]
 
   project             = var.project_id
-  name                = "${var.name}-migrate"
+  name                = "${{var.name}}-migrate"
   location            = var.region
   deletion_protection = false
 
-  template {
-    template {
+  template {{
+    template {{
       service_account = module.service.runtime_service_account
       max_retries     = 1
       timeout         = "600s"
 
-      volumes {
+      volumes {{
         name = "cloudsql"
-        cloud_sql_instance {
-          instances = [module.db.connection_name]
-        }
-      }
+        cloud_sql_instance {{
+          instances = [{db_conn_expr}]
+        }}
+      }}
 
-      containers {
+      containers {{
         image   = var.image
         command = ["python", "-m", "app.db"]
 
-        env {
+        env {{
           name  = "APP_ENV"
           value = var.environment
-        }
+        }}
 
-        env {
+        env {{
           name  = "CLOUD_SQL_CONNECTION_NAME"
-          value = module.db.connection_name
-        }
+          value = {db_conn_expr}
+        }}
 
-        env {
+        env {{
           name  = "DB_PASSWORD_SECRET_ID"
-          value = module.db.secret_id
-        }
+          value = {db_sec_expr}
+        }}
 
-        volume_mounts {
+        volume_mounts {{
           name       = "cloudsql"
           mount_path = "/cloudsql"
-        }
-      }
-    }
-  }
-}"""
+        }}
+      }}
+    }}
+  }}
+}}"""
             )
 
     if has_firestore and module:
@@ -694,12 +770,13 @@ provider "google" {
         )
 
     if has_bigquery and module:
+        bq_proj_hcl = f'\n  dataset_project         = "{bigquery_project}"' if bigquery_project else ""
         datasets_hcl = f"\n  datasets                = {_hcl_string_list(bigquery_datasets)}" if bigquery_datasets else ""
         blocks.append(
             f"""module "bigquery" {{
   source = {module_source("bigquery")}
 
-  project_id              = var.project_id
+  project_id              = var.project_id{bq_proj_hcl}
   runtime_service_account = module.service.runtime_service_account{datasets_hcl}
 }}"""
         )
@@ -715,7 +792,15 @@ provider "google" {
 }}"""
         )
 
-    if has_bucket and module:
+    if existing_bucket and module:
+        blocks.append(
+            f"""resource "google_storage_bucket_iam_member" "existing_bucket" {{
+  bucket = "{existing_bucket}"
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${{module.service.runtime_service_account}}"
+}}"""
+        )
+    elif creates_bucket and module:
         blocks.append(
             f"""module "bucket" {{
   source = {module_source("bucket")}
@@ -795,7 +880,10 @@ provider "google" {
         )
         receiver_secret_names = [str(s) for s in receiver.get("secrets", [])]
         rsecrets = _hcl_string_list(receiver_secret_names)
-        receiver_mounts = _mounted_secret_ids_hcl(_unique_secret_ids(prefix, receiver_secret_names, secret_map))
+        receiver_mounts = _mounted_secret_ids_hcl(
+            _unique_secret_ids(prefix, receiver_secret_names, secret_map),
+            preexisting_secret_ids,
+        )
         queue_env = ""
         if queue_name:
             queue_env = (
@@ -1209,9 +1297,26 @@ def write_local_dev_files(app: dict, components: list[dict], dest: Path) -> None
     has_postgres = any(c.get("database") == "postgres" for c in components)
     has_firestore = any(c.get("database") == "firestore" for c in components)
     has_bigquery = any(c.get("database") == "bigquery" or c.get("bigquery") for c in components)
-    has_bucket = any(c.get("bucket") == "private" for c in components)
+    existing_buckets = [str(c["existing_bucket"]) for c in components if c.get("existing_bucket")]
+    has_bucket = any(c.get("bucket") == "private" or c.get("existing_bucket") for c in components)
     queues = [str(c["queue"]) for c in components if c.get("queue")]
     has_receiver = any(c.get("receiver") for c in components)
+
+    bq_proj_default = ""
+    bq_ds_default = ""
+    for c in components:
+        if c.get("bigquery_project") and not bq_proj_default:
+            bq_proj_default = str(c["bigquery_project"])
+        bqd = c.get("bigquery_datasets") or []
+        if bqd and not bq_ds_default:
+            first_ds = str(bqd[0]).replace(":", ".")
+            if "." in first_ds:
+                p, d = first_ds.split(".", 1)
+                if not bq_proj_default:
+                    bq_proj_default = p
+                bq_ds_default = d
+            else:
+                bq_ds_default = first_ds
 
     if has_postgres:
         env_lines += [
@@ -1229,14 +1334,15 @@ def write_local_dev_files(app: dict, components: list[dict], dest: Path) -> None
         env_lines += [
             "",
             "# BigQuery project and dataset for this component. Leave blank until service.yaml names them. Do not assume a shared warehouse.",
-            "BIGQUERY_PROJECT=",
-            "BIGQUERY_DATASET=",
+            f"BIGQUERY_PROJECT={bq_proj_default}",
+            f"BIGQUERY_DATASET={bq_ds_default}",
         ]
     if has_bucket:
+        bucket_val = existing_buckets[0] if existing_buckets else f"{app['name']}-local-assets"
         env_lines += [
             "",
             "# Cloud Storage bucket (uses local in-memory/temp fake when APP_ENV=local)",
-            f"GCS_BUCKET_NAME={app['name']}-local-assets",
+            f"GCS_BUCKET_NAME={bucket_val}",
         ]
     if queues:
         env_lines += [

@@ -72,8 +72,9 @@ def _check_resource_prefixes(manifest_data: dict, normalized_data: dict, repo_di
             if not rname.startswith(valid_prefixes):
                 unprefixed.append(f"receiver:{recv['name']}")
         secret_map = comp.get("secret_map") if isinstance(comp.get("secret_map"), dict) else {}
+        existing_secs = {str(s) for s in comp.get("existing_secrets", [])}
         for s in comp.get("secrets", []):
-            if str(s) in secret_map:
+            if str(s) in secret_map or str(s) in existing_secs:
                 continue
             sname = str(s).replace("_", "-")
             if not sname.startswith(valid_prefixes):

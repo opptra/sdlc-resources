@@ -101,14 +101,14 @@ resource "google_cloud_run_v2_job" "app" {
           }
         }
 
-        # Mount <prefix>-<ENV_NAME> back into the variable the process already reads.
+        # Mount <prefix>-<ENV_NAME> or var.secret_map[ENV_NAME] back into the variable the process reads.
         dynamic "env" {
           for_each = each.value.secrets
           content {
             name = env.value
             value_source {
               secret_key_ref {
-                secret  = startswith(env.value, "${var.secret_prefix}-") ? env.value : "${var.secret_prefix}-${env.value}"
+                secret  = lookup(var.secret_map, env.value, startswith(env.value, "${var.secret_prefix}-") ? env.value : "${var.secret_prefix}-${env.value}")
                 version = "latest"
               }
             }

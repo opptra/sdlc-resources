@@ -98,13 +98,19 @@ ALLOWED_COMPONENT_KEYS = {
     "auth",
     "parts",
     "database",
+    "postgres_instance",
+    "postgres_secret",
+    "postgres_external",
     "bigquery",
+    "bigquery_project",
     "bigquery_datasets",
     "extra_roles",
     "custom_terraform",
     "bucket",
+    "existing_bucket",
     "queue",
     "secrets",
+    "existing_secrets",
     "secret_map",
     "legacy_service_name",
     "env",
@@ -341,6 +347,12 @@ def _normalize_component_fields(comp: dict, default_region: str = "asia-south1")
         for s_key in comp["secret_map"]:
             if s_key not in comp["secrets"]:
                 comp["secrets"].append(s_key)
+    if isinstance(comp.get("existing_secrets"), list):
+        for s_key in comp["existing_secrets"]:
+            if s_key not in comp["secrets"]:
+                comp["secrets"].append(s_key)
+    if comp.get("existing_bucket") and comp.get("bucket", "none") == "none":
+        comp["bucket"] = "private"
     if comp.get("receiver") and isinstance(comp["receiver"], dict):
         recv = comp["receiver"]
         if recv.get("queue") and not comp.get("queue"):
@@ -496,6 +508,9 @@ def check(data: dict) -> list[str]:
         for sec in component.get("secrets", []):
             if SECRET_ID.fullmatch(str(sec)) is None:
                 errors.append(f"{cname}: secret {sec!r} must be an environment variable name")
+        for sec in component.get("existing_secrets", []):
+            if SECRET_ID.fullmatch(str(sec)) is None:
+                errors.append(f"{cname}: existing_secret {sec!r} must be an environment variable name")
         secret_map = component.get("secret_map")
         if secret_map is not None:
             if not isinstance(secret_map, dict):

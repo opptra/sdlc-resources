@@ -681,3 +681,92 @@ components:
         )
         sec_data = json.loads(sec_res.stdout)
         assert sec_data["secrets"][0]["secret_id"] == "ads-GEMINI_API_KEY"
+
+
+def test_connect_preexisting_postgres_bigquery_bucket_and_shared_secrets() -> None:
+    manifest_yaml = """name: finance-reconciler
+prefix: fin
+purpose: Reconcile invoices against pre-existing Cloud SQL, cross-project BigQuery, shared bucket, and shared secrets.
+prod_project: opptra-applications
+region: asia-south1
+components:
+  - name: api
+    archetype: cloud-run-service
+    path: .
+    auth: iap
+    database: postgres
+    postgres_instance: opptra-applications:asia-south1:shared-erp-db
+    postgres_secret: shared-erp-db-password
+    bigquery: true
+    bigquery_project: opptra-data-warehouse
+    bigquery_datasets: [billing_mart, opptra-raw.invoices_raw]
+    bucket: private
+    existing_bucket: opptra-shared-invoices
+    parts: [api]
+    secrets: [APP_SIGNING_KEY]
+    existing_secrets: [SHARED_SLACK_TOKEN]
+    secret_map:
+      SHARED_SLACK_TOKEN: corp-slack-bot-token
+"""
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp) / "finance-reconciler"
+        repo.mkdir(parents=True)
+        manifest_path = repo / "service.yaml"
+        manifest_path.write_text(manifest_yaml)
+
+        subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "all", str(manifest_path), str(repo)],
+            check=True,
+        )
+
+        main_tf = (repo / "infra" / "main.tf").read_text()
+        # 1. Pre-existing Postgres: does NOT create module "db", mounts existing Cloud SQL socket & secret
+        assert 'module "db"' not in main_tf
+        assert 'cloud_sql_instance = "opptra-applications:asia-south1:shared-erp-db"' in main_tf
+        assert 'db_secret_id       = "shared-erp-db-password"' in main_tf
+        assert 'secret_id = "shared-erp-db-password"' in main_tf
+
+        # 2. Pre-existing BigQuery: passes dataset_project and datasets, sets BIGQUERY_PROJECT & BIGQUERY_DATASET
+        assert 'module "bigquery"' in main_tf
+        assert 'dataset_project         = "opptra-data-warehouse"' in main_tf
+        assert '"billing_mart"' in main_tf
+        assert '"opptra-raw.invoices_raw"' in main_tf
+        assert 'BIGQUERY_PROJECT = "opptra-data-warehouse"' in main_tf
+        assert 'BIGQUERY_DATASET = "billing_mart"' in main_tf
+
+        # 3. Pre-existing Bucket: does NOT create module "bucket", grants IAM on existing bucket
+        assert 'module "bucket"' not in main_tf
+        assert 'resource "google_storage_bucket_iam_member" "existing_bucket"' in main_tf
+        assert 'bucket = "opptra-shared-invoices"' in main_tf
+        assert 'gcs_bucket_name = "opptra-shared-invoices"' in main_tf
+
+        # 4. Pre-existing Secrets: module "secrets" only creates shell for APP_SIGNING_KEY, not SHARED_SLACK_TOKEN
+        secrets_block = main_tf.split('module "secrets"')[1]
+        assert '"fin-APP_SIGNING_KEY"' in secrets_block
+        assert "corp-slack-bot-token" not in secrets_block
+        # But module "service" mounts both (app-owned via module.secrets.by_id and existing as direct string)
+        assert 'module.secrets.by_id["fin-APP_SIGNING_KEY"]' in main_tf
+        assert '"corp-slack-bot-token",' in main_tf
+
+        # Verify check_secret_versions.py detects both app-owned and pre-existing mounted secret IDs
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from check_secret_versions import mounted_secret_ids
+
+        mounted = mounted_secret_ids(main_tf)
+        assert "fin-APP_SIGNING_KEY" in mounted
+        assert "corp-slack-bot-token" in mounted
+
+        # Verify .env.example has pre-existing BigQuery & Bucket defaults
+        env_example = (repo / ".env.example").read_text()
+        assert "BIGQUERY_PROJECT=opptra-data-warehouse" in env_example
+        assert "BIGQUERY_DATASET=billing_mart" in env_example
+        assert "GCS_BUCKET_NAME=opptra-shared-invoices" in env_example
+
+        # Verify 17-point scorecard passes 100%
+        status_res = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "status", str(repo), "--check"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert status_res.returncode == 0, status_res.stderr
