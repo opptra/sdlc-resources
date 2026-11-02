@@ -104,7 +104,7 @@ def test_generate_selects_capabilities() -> None:
         assert not (dest / ".cursor" / "rules" / "worker.mdc").exists()
 
         status_res = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "status", str(dest), "--check"],
+            [sys.executable, str(ROOT / "scripts" / "odlc.py"), "status", str(dest), "--check"],
             check=False,
             capture_output=True,
             text=True,
@@ -160,7 +160,7 @@ unmet:
         dest = Path(tmp) / "cx"
 
         for phase in ("check", "init-runtime", "add-data", "add-tests", "sync-infra"):
-            cmd = [sys.executable, str(ROOT / "scripts" / "sdlc.py"), phase, str(manifest_path)]
+            cmd = [sys.executable, str(ROOT / "scripts" / "odlc.py"), phase, str(manifest_path)]
             if phase != "check":
                 cmd.append(str(dest))
             subprocess.run(cmd, check=True)
@@ -234,7 +234,7 @@ unmet:
         assert "make setup" in readme
 
         res = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "status", str(dest), "--json", "--check"],
+            [sys.executable, str(ROOT / "scripts" / "odlc.py"), "status", str(dest), "--json", "--check"],
             check=True,
             capture_output=True,
             text=True,
@@ -246,7 +246,7 @@ unmet:
         assert "firestore" in report["detected"]["capabilities_in_deps"]
 
         table_res = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "doctor", str(dest)],
+            [sys.executable, str(ROOT / "scripts" / "odlc.py"), "doctor", str(dest)],
             check=True,
             capture_output=True,
             text=True,
@@ -318,7 +318,7 @@ components:
         subprocess.run(
             [
                 sys.executable,
-                str(ROOT / "scripts" / "sdlc.py"),
+                str(ROOT / "scripts" / "odlc.py"),
                 "sync-infra",
                 str(manifest_path),
                 str(repo),
@@ -342,7 +342,7 @@ components:
 
         # status --check passes with zero ci_path_errors
         res = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "status", str(repo), "--check"],
+            [sys.executable, str(ROOT / "scripts" / "odlc.py"), "status", str(repo), "--check"],
             check=False,
             capture_output=True,
             text=True,
@@ -356,7 +356,7 @@ components:
             "--no-allow-unauthenticated --set-secrets=TOKEN=dashboard-token:latest\n"
         )
         disc_res = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "discover-infra", str(repo), "--table"],
+            [sys.executable, str(ROOT / "scripts" / "odlc.py"), "discover-infra", str(repo), "--table"],
             check=True,
             capture_output=True,
             text=True,
@@ -367,7 +367,7 @@ components:
         imp_res = subprocess.run(
             [
                 sys.executable,
-                str(ROOT / "scripts" / "sdlc.py"),
+                str(ROOT / "scripts" / "odlc.py"),
                 "discover-infra",
                 str(repo),
                 "--write-imports",
@@ -414,7 +414,7 @@ def test_non_destructive_init_runtime_and_infra_preserves_imports_and_plans() ->
         subprocess.run(
             [
                 sys.executable,
-                str(ROOT / "scripts" / "sdlc.py"),
+                str(ROOT / "scripts" / "odlc.py"),
                 "init-runtime",
                 str(FIXTURE),
                 str(dest),
@@ -432,7 +432,7 @@ def test_non_destructive_init_runtime_and_infra_preserves_imports_and_plans() ->
         subprocess.run(
             [
                 sys.executable,
-                str(ROOT / "scripts" / "sdlc.py"),
+                str(ROOT / "scripts" / "odlc.py"),
                 "sync-infra",
                 str(FIXTURE),
                 str(dest),
@@ -472,7 +472,7 @@ def test_brownfield_secret_map_legacy_service_and_propose_manifest() -> None:
         prop_res = subprocess.run(
             [
                 sys.executable,
-                str(ROOT / "scripts" / "sdlc.py"),
+                str(ROOT / "scripts" / "odlc.py"),
                 "discover-infra",
                 str(repo),
                 "--propose-manifest",
@@ -485,7 +485,7 @@ def test_brownfield_secret_map_legacy_service_and_propose_manifest() -> None:
         manifest_path.write_text(prop_res.stdout)
 
         check_res = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "check", str(manifest_path)],
+            [sys.executable, str(ROOT / "scripts" / "odlc.py"), "check", str(manifest_path)],
             check=False,
             capture_output=True,
             text=True,
@@ -495,7 +495,7 @@ def test_brownfield_secret_map_legacy_service_and_propose_manifest() -> None:
         subprocess.run(
             [
                 sys.executable,
-                str(ROOT / "scripts" / "sdlc.py"),
+                str(ROOT / "scripts" / "odlc.py"),
                 "sync-infra",
                 str(manifest_path),
                 str(repo),
@@ -505,7 +505,7 @@ def test_brownfield_secret_map_legacy_service_and_propose_manifest() -> None:
         subprocess.run(
             [
                 sys.executable,
-                str(ROOT / "scripts" / "sdlc.py"),
+                str(ROOT / "scripts" / "odlc.py"),
                 "discover-infra",
                 str(repo),
                 "--write-imports",
@@ -522,7 +522,7 @@ def test_brownfield_secret_map_legacy_service_and_propose_manifest() -> None:
         assert "projects/opptra-analytics-prod/locations/asia-southeast1/services/analytics-portal" in imports_tf
 
         status_res = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "status", str(repo), "--json", "--check"],
+            [sys.executable, str(ROOT / "scripts" / "odlc.py"), "status", str(repo), "--json", "--check"],
             check=True,
             capture_output=True,
             text=True,
@@ -624,7 +624,7 @@ components:
         manifest_path.write_text(manifest_yaml)
 
         subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "all", str(manifest_path), str(repo)],
+            [sys.executable, str(ROOT / "scripts" / "odlc.py"), "all", str(manifest_path), str(repo)],
             check=True,
         )
 
@@ -651,7 +651,7 @@ components:
         subprocess.run(
             [
                 sys.executable,
-                str(ROOT / "scripts" / "sdlc.py"),
+                str(ROOT / "scripts" / "odlc.py"),
                 "discover-infra",
                 str(repo),
                 "--write-imports",
@@ -663,9 +663,9 @@ components:
             repo / "infra" / "custom.keep.tf"
         ).read_text()
 
-        # Test sdlc.py next and sdlc.py secrets
+        # Test odlc next and odlc secrets
         next_res = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "next", str(repo), "--json"],
+            [sys.executable, str(ROOT / "scripts" / "odlc.py"), "next", str(repo), "--json"],
             check=True,
             capture_output=True,
             text=True,
@@ -674,7 +674,7 @@ components:
         assert next_data["aligned"] is True
 
         sec_res = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "secrets", str(repo), "--json"],
+            [sys.executable, str(ROOT / "scripts" / "odlc.py"), "secrets", str(repo), "--json"],
             check=True,
             capture_output=True,
             text=True,
@@ -715,7 +715,7 @@ components:
         manifest_path.write_text(manifest_yaml)
 
         subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "all", str(manifest_path), str(repo)],
+            [sys.executable, str(ROOT / "scripts" / "odlc.py"), "all", str(manifest_path), str(repo)],
             check=True,
         )
 
@@ -764,7 +764,7 @@ components:
 
         # Verify 17-point scorecard passes 100%
         status_res = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "status", str(repo), "--check"],
+            [sys.executable, str(ROOT / "scripts" / "odlc.py"), "status", str(repo), "--check"],
             check=False,
             capture_output=True,
             text=True,
@@ -779,7 +779,7 @@ components:
             "gcloud run deploy ext-pg-app --region asia-south1 --set-secrets=DATABASE_URL=neon-db-url:latest\n"
         )
         prop_ext = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "discover-infra", str(ext_pg_repo), "--propose-manifest"],
+            [sys.executable, str(ROOT / "scripts" / "odlc.py"), "discover-infra", str(ext_pg_repo), "--propose-manifest"],
             check=True,
             capture_output=True,
             text=True,
@@ -795,7 +795,7 @@ components:
             "--add-cloudsql-instances=opptra-applications:asia-south1:existing-pg\n"
         )
         prop_csql = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "discover-infra", str(csql_repo), "--propose-manifest"],
+            [sys.executable, str(ROOT / "scripts" / "odlc.py"), "discover-infra", str(csql_repo), "--propose-manifest"],
             check=True,
             capture_output=True,
             text=True,

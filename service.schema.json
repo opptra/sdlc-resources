@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Opptra service manifest",
-  "description": "Facts only. scripts/sdlc.py and scripts/generate.py decide CI, rules, and deploy from these facts.",
+  "description": "Facts only. odlc (scripts/odlc.py) and scripts/generate.py decide CI, rules, and deploy from these facts.",
   "type": "object",
   "additionalProperties": false,
   "required": ["name", "purpose", "prod_project", "region"],

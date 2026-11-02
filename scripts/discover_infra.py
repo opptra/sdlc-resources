@@ -561,7 +561,7 @@ def render_discovery_markdown(report: dict) -> str:
     ]
     if not report["resources_table"]:
         lines.append(
-            "| *(none detected in scripts)* | Configure in `service.yaml` | Repo root | `modules/cloud-run-*` | **Create** | `sdlc.py sync-infra` will create fresh Terraform in `infra/`. |"
+            "| *(none detected in scripts)* | Configure in `service.yaml` | Repo root | `modules/cloud-run-*` | **Create** | `odlc sync-infra` will create fresh Terraform in `infra/`. |"
         )
     else:
         for row in report["resources_table"]:
@@ -652,8 +652,8 @@ def write_imports_for_manifest(manifest_path: Path, dest: Path, project_id: str 
         first_infra = next(iter(by_infra_dir.keys()))
         custom_tf = first_infra / "custom.keep.tf"
         custom_blocks = [
-            "# Custom GCP resources discovered by `sdlc.py discover-infra`.",
-            "# Preserved across `sdlc.py sync-infra` runs.",
+            "# Custom GCP resources discovered by `odlc discover-infra`.",
+            "# Preserved across `odlc sync-infra` runs.",
         ]
         for cr in disc["custom_resources"]:
             slug = re.sub(r"[^a-zA-Z0-9_]", "_", cr["name"])

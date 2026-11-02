@@ -6,7 +6,8 @@ Two kinds of files live here. The guide runs the first kind from a checkout of t
 
 | Script | What it does in the guide |
 |---|---|
-| [sdlc.py](sdlc.py) | Phase CLI: `check`, `status`, `init-runtime`, `add-data`, `add-tests`, `sync-infra` |
+| [odlc.py](odlc.py) | Phase CLI `odlc`: `check`, `status`, `next`, `secrets`, `doctor`, `discover-infra`, `init-runtime`, `add-data`, `add-tests`, `sync-infra`, `all`. `discover` and `sync` are aliases. |
+| [sdlc.py](sdlc.py) | Forwards to `odlc` so older callers that still run `scripts/sdlc.py` keep working. |
 | [generate.py](generate.py) | Turns `service.yaml` into the app: workflows, infra, rules, hooks, and the copied scripts below |
 | [check_manifest.py](check_manifest.py) | Rejects a `service.yaml` that does not match [service.schema.json](../service.schema.json) |
 | [build_rules.py](build_rules.py) | Compiles [rules/source](../rules/source/) into `AGENTS.md`, `CLAUDE.md`, and `.cursor/rules` |

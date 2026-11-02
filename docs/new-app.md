@@ -11,7 +11,7 @@ The agent scaffolds the app in five phases (`check` → `init-runtime` → `add-
 1. A person opens a Linear issue with the users, the outcome, the production GCP project, and who can sign in (and an optional migration or design plan in the folder).
 2. The developer runs the `create-app` skill. The skill reads the Linear issue and any local plan, confirms archetype, name, auth, data store, and `prod_project`, and asks only what is still missing. The 17-point table is the receipt after phase 5, not the interview. If `.sdlc/state.yaml` already exists, it resumes the next phase.
 3. If part of the request is outside the platform catalog, the skill records it under `unmet` in `service.yaml` with a recommendation and scaffolds everything else.
-4. After the developer agrees, `create-app` runs the 5 phases using `scripts/sdlc.py`:
+4. After the developer agrees, `create-app` runs the 5 phases using `odlc` (`scripts/odlc.py`):
    - Phase 1 (`check`): Writes and validates `service.yaml`.
    - Phase 2 (`init-runtime`): Scaffolds the runtime skeleton and customizes the initial routes, job entrypoints, or UI layout.
    - Phase 3 (`add-data`): Installs the database/storage/queue/secret packages and customizes the state or schema helpers.

@@ -2,7 +2,7 @@
 
 The standard for how an Opptra app is set up, aligned, changed, reviewed, and deployed.
 
-`service.yaml` holds the facts: production project, region, workloads/components, capabilities, and any `unmet` platform gaps. [mapping.yaml](mapping.yaml) decides the files, the CI, the deploy, and the agent rules. [scripts/sdlc.py](scripts/sdlc.py) and [scripts/generate.py](scripts/generate.py) apply that decision in phases (`check`, `status`, `init-runtime`, `add-data`, `add-tests`, `sync-infra`). People do not hand-copy a hardcoded pipeline.
+`service.yaml` holds the facts: production project, region, workloads/components, capabilities, and any `unmet` platform gaps. [mapping.yaml](mapping.yaml) decides the files, the CI, the deploy, and the agent rules. [odlc](scripts/odlc.py) (`scripts/odlc.py`) and [scripts/generate.py](scripts/generate.py) apply that decision in phases (`check`, `status`, `init-runtime`, `add-data`, `add-tests`, `sync-infra`). People do not hand-copy a hardcoded pipeline.
 
 ## Branches
 
@@ -18,7 +18,7 @@ A pull request from `main` into `production` deploys `prod_project` from `servic
 |---|---|
 | [docs/workflows.md](docs/workflows.md) | Which skill to use. GitHub Pages publishes `docs/` from `main` with a left page index and a right heading index. |
 | `opptra/agent-skills` (`opptra`, `create-app`, `change-app`, `align-app`, `feature`, `bug`) | The agent skills that drive the SDLC |
-| [scripts/sdlc.py](scripts/sdlc.py) | Phase CLI (`check`, `status`, `init-runtime`, `add-data`, `add-tests`, `sync-infra`) |
+| [odlc](scripts/odlc.py) | Phase CLI (`check`, `status`, `init-runtime`, `add-data`, `add-tests`, `sync-infra`). `discover` and `sync` are aliases for `discover-infra` and `sync-infra`. |
 | [docs/new-app.md](docs/new-app.md) | Creating a new app |
 | [docs/align.md](docs/align.md) | Aligning an existing repository |
 | [docs/feature.md](docs/feature.md) | Reviewing a feature |
