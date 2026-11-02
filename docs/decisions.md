@@ -10,7 +10,7 @@ These are the choices this repository implements. Reviewers who want to change o
 
 ## Stack for a new app
 
-Python 3.12, uv, Ruff, pytest, FastAPI. Vite, React, and TypeScript for the UI. One Docker image per component. The image builds from `Dockerfile` in the component directory. When the Dockerfile or the files it copies live elsewhere in the repo, the component sets `docker_context` and `dockerfile`. The shared workflow builds those paths. An app does not fork the workflow for a different Dockerfile location. FastAPI serves `/api` and the built UI on one Cloud Run service, so the browser and the API share an origin. Scheduled jobs and an optional webhook receiver share one Docker image with per-workload commands.
+Python 3.12, uv, Ruff, pytest, FastAPI. Vite, React, and TypeScript for the UI. One Docker image per component. The image builds from `Dockerfile` in the component directory. When the Dockerfile or the files it copies live elsewhere in the repo, the component sets `docker_context` and `dockerfile`. The shared workflow builds those paths and passes the directory to the shell as `BUILD_CONTEXT`, not `DOCKER_CONTEXT`. An app does not fork the workflow for a different Dockerfile location. FastAPI serves `/api` and the built UI on one Cloud Run service, so the browser and the API share an origin. Scheduled jobs and an optional webhook receiver share one Docker image with per-workload commands.
 
 An existing app keeps its language. It still adopts `service.yaml`, the branches, the required check, the agent rules, and the deploy workflow.
 

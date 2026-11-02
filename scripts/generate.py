@@ -1277,7 +1277,12 @@ def _sh_quote(value: str) -> str:
 
 
 def image_build_recipe(component: dict) -> str | None:
-    """The docker build the shared deploy workflow runs for this component."""
+    """The docker build the shared deploy workflow runs for this component.
+
+    The recipe is a command, not an environment variable. Do not export
+    ``DOCKER_CONTEXT``: the Docker CLI treats that name as a context, and ``.``
+    makes ``docker build`` fail. The workflows pass the directory as ``BUILD_CONTEXT``.
+    """
     parts = set(component.get("parts") or [])
     if not parts & {"api", "job", "worker"}:
         return None

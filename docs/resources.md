@@ -23,7 +23,7 @@ A pull request into `main` plans `opptra-staging` and does not apply. A push to 
 
 On a laptop, `make ci` runs that same `docker build` before the first push to staging, once the deploy workflows exist. It also runs `terraform validate` with `-backend=false` when Terraform is installed. That check does not read state and does not apply. `terraform plan` still runs on the pull request.
 
-The build context is the component directory, and the Dockerfile there is `Dockerfile`. A component whose image must read other files in the repo sets `docker_context` and `dockerfile` in `service.yaml`. Both paths stay inside the repo, and the Dockerfile stays inside the context. The laptop build and the shared workflow use that pair.
+The build context is the component directory, and the Dockerfile there is `Dockerfile`. A component whose image must read other files in the repo sets `docker_context` and `dockerfile` in `service.yaml`. Both paths stay inside the repo, and the Dockerfile stays inside the context. The laptop build and the shared workflow use that pair. The workflow passes the directory to the shell as `BUILD_CONTEXT`. It does not export `DOCKER_CONTEXT`: the Docker CLI reserves that name, and a value of `.` makes `docker build` fail with `no builder "." found`.
 
 The plan on the pull request is the one a person reads. The merge creates a new commit, so the apply job plans again for that commit and applies that plan. The image tag in the applied plan is the commit that landed on the branch.
 

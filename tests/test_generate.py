@@ -995,3 +995,13 @@ components:
         assert result.returncode == 0, result.stderr
         report = json.loads(result.stdout)
         assert any("COPY ../shared" in note for note in report["image_notes"])
+
+
+def test_deploy_workflows_do_not_export_docker_context() -> None:
+    """DOCKER_CONTEXT is reserved by the Docker CLI. A value of . fails the build."""
+    workflows = ROOT / ".github" / "workflows"
+    for name in ("deploy-job.yml", "deploy-cloud-run.yml", "deploy-worker.yml"):
+        text = (workflows / name).read_text()
+        assert "BUILD_CONTEXT: ${{ inputs.docker_context }}" in text
+        assert "DOCKER_CONTEXT" not in text
+        assert "$GITHUB_WORKSPACE/${BUILD_CONTEXT}" in text
