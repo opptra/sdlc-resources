@@ -21,6 +21,10 @@ All of this runs on a GitHub-hosted runner, in the app repository, by calling wo
 
 A pull request into `main` plans `opptra-staging` and does not apply. A push to `staging` applies that plan in the staging project. A pull request into `production` plans `prod_project`, and the merge applies it.
 
+On a laptop, `make ci` runs that same `docker build` before the first push to staging, once the deploy workflows exist. It also runs `terraform validate` with `-backend=false` when Terraform is installed. That check does not read state and does not apply. `terraform plan` still runs on the pull request.
+
+The build context is the component directory, and the Dockerfile there is `Dockerfile`. A component whose image must read other files in the repo sets `docker_context` and `dockerfile` in `service.yaml`. Both paths stay inside the repo, and the Dockerfile stays inside the context. The laptop build and the shared workflow use that pair.
+
 The plan on the pull request is the one a person reads. The merge creates a new commit, so the apply job plans again for that commit and applies that plan. The image tag in the applied plan is the commit that landed on the branch.
 
 ## What Terraform owns

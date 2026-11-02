@@ -16,7 +16,8 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-MOUNTED_SECRET = re.compile(r'module\.secrets\.by_id\["([^"]+)"\]')
+# module.secrets.by_id["id"] and one(module.secrets[*].by_id)["id"]
+MOUNTED_SECRET = re.compile(r'(?:module\.secrets\.by_id|by_id\))\["([^"]+)"\]')
 MOUNTED_BLOCK = re.compile(r"mounted_secret_ids\s*=\s*\[(.*?)\n\s*\]", re.DOTALL)
 DIRECT_SECRET = re.compile(r'^\s*"([^"]+)"\s*,?\s*$', re.M)
 

@@ -32,6 +32,19 @@ module "receiver" {
 """
 
 
+def test_mounted_ids_include_a_count_gated_reference() -> None:
+    main_tf = """
+  mounted_secret_ids = one(module.secrets[*].by_id) == null ? [] : [
+    one(module.secrets[*].by_id)["inventory-optimizer-database-url"],
+    one(module.secrets[*].by_id)["FLOW_AGENT_KEY"],
+  ]
+"""
+    assert mounted_secret_ids(main_tf) == [
+        "inventory-optimizer-database-url",
+        "FLOW_AGENT_KEY",
+    ]
+
+
 def test_mounted_ids_are_unique_and_keep_order() -> None:
     assert mounted_secret_ids(MAIN_TF) == [
         "cx-SMTP_PASSWORD",

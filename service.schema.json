@@ -168,6 +168,16 @@
             "minLength": 1,
             "description": "Optional working directory for UI code in existing repositories (defaults to components/<name>/frontend)."
           },
+          "docker_context": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Docker build context relative to the repo root. Omit it to build Dockerfile inside the component directory. Set it with dockerfile when the image must see files outside that directory."
+          },
+          "dockerfile": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Dockerfile path relative to the repo root. Required together with docker_context, and the file must sit inside that context."
+          },
           "auth": {
             "type": "string",
             "enum": ["app-login", "iap", "public", "shared-secret", "none"]

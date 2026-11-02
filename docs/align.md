@@ -30,6 +30,10 @@ Apps Script is unsupported. Report it and leave the repository unchanged.
 
 Do not delete the current deploy path during **Adopt now**.
 
+`discover-infra --propose-manifest` writes `docker_context` and `dockerfile` when the Dockerfile is not `<path>/Dockerfile`. When the repo has one job, no service, and the deploy script does not set `--command`, the job `command` comes from that Dockerfile's `CMD`. Keep those fields. `odlc status` fails when the directory or file is missing, and its `image_notes` list a `COPY` source outside the context. Fix the note in `service.yaml` and run `sync-infra` again.
+
+`make ci` builds that image only after `sync-infra` writes the deploy workflows. The **Adopt now** path uses `--ci-only`, leaves `cloudbuild.yaml` or `deploy.sh` in place, and does not build the image. The image build starts when **Move the host** connects the shared deploy workflow.
+
 ## 2. Fill capability gaps (phased scripts + skill)
 
 When `odlc status --json` detects code using a capability that is missing its standard wiring or tests:

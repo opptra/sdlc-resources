@@ -17,6 +17,8 @@ An app does not copy these files. [scripts/generate.py](../../scripts/generate.p
 
 `deploy-cloud-run` and `deploy-job` run `scripts/check_secret_versions.py` from the app before the image build. The generator copies that file. A missing copy fails the deploy.
 
+Those deploy workflows build `Dockerfile` inside the component directory. A component that sets `docker_context` and `dockerfile` in `service.yaml` builds that pair instead. `make ci` runs the same build on a laptop when the deploy workflows were generated.
+
 ## Run in this repository
 
 | Workflow | What it does |
