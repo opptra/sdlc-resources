@@ -38,6 +38,8 @@ When a request includes something the platform does not yet generate, the suppor
 
 A direct push to `staging` deploys staging. `staging` is not a protected branch, so a developer can push there without the `main` review. Do not merge `main` into `staging`. A pull request from `main` into `production` is the only promotion from `main`, and that merge deploys production. One human approves. Dobby reviews every pull request and does not count as that approval.
 
+`deploy-staging` and `deploy-production` also accept `workflow_dispatch`. A run from the Actions page deploys only the matching branch, and that new run resolves the shared workflows at `main` again. Re-running an old job keeps the shared workflow commit from the original run.
+
 Product code and changes to `infra/`, `.github/workflows`, `config/jobs.yaml` schedules, or `service.yaml` go in separate pull requests (`feature` / `bug` for product code, `change-app` for capabilities and schedules).
 
 ## CI
