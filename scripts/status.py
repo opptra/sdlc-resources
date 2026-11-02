@@ -105,6 +105,96 @@ def _git_branches(repo_dir: Path) -> list[str]:
     return [line.strip() for line in res.stdout.splitlines() if line.strip()]
 
 
+def _copy_sources(dockerfile_text: str) -> list[str]:
+    """Source paths from COPY and ADD, ignoring build-stage copies and URLs."""
+    sources: list[str] = []
+    for raw in dockerfile_text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line.upper().startswith(("COPY ", "ADD ")):
+            continue
+        if "--from=" in line.lower():
+            continue
+        body = line.split(None, 1)[1].strip()
+        if body.startswith("["):
+            try:
+                parts = json.loads(body)
+            except json.JSONDecodeError:
+                continue
+            tokens = [str(part) for part in parts[:-1]]
+        else:
+            tokens = [tok for tok in body.split() if not tok.startswith("--")]
+            tokens = tokens[:-1]
+        for src in tokens:
+            if src.startswith(("http://", "https://", "$")):
+                continue
+            sources.append(src)
+    return sources
+
+
+def _inside_context(context: Path, candidate: Path) -> bool:
+    try:
+        candidate.resolve().relative_to(context.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def _source_exists(context: Path, src: str) -> bool:
+    candidate = context / (Path(src).parent if "*" in src or "?" in src else src)
+    if not _inside_context(context, candidate):
+        return False
+    if "*" in src or "?" in src:
+        return candidate.is_dir()
+    return candidate.exists()
+
+
+def _image_layout(
+    repo_dir: Path, components: list[dict], deploy_connected: bool
+) -> tuple[list[str], list[str]]:
+    """Missing build paths fail the scorecard. COPY gaps are notes for service.yaml."""
+    errors: list[str] = []
+    notes: list[str] = []
+    for component in components:
+        parts = set(component.get("parts") or [])
+        if not parts & {"api", "job", "worker"}:
+            continue
+        name = str(component.get("name") or "component")
+        context = component.get("docker_context")
+        dockerfile = component.get("dockerfile")
+        if context or dockerfile:
+            if not context or not dockerfile:
+                errors.append(f"{name}: set docker_context and dockerfile together")
+                continue
+            ctx = repo_dir / str(context)
+            df = repo_dir / str(dockerfile)
+            if not ctx.is_dir():
+                errors.append(f"{name}: docker_context {context} is not a directory")
+            if not df.is_file():
+                errors.append(f"{name}: dockerfile {dockerfile} is not a file")
+            if ctx.is_dir() and df.is_file():
+                try:
+                    df.resolve().relative_to(ctx.resolve())
+                except ValueError:
+                    errors.append(f"{name}: dockerfile must be inside docker_context")
+                else:
+                    for src in _copy_sources(df.read_text(errors="ignore")):
+                        if not _source_exists(ctx, src):
+                            notes.append(
+                                f"{name}: COPY {src} is outside docker_context {context}. "
+                                "Widen docker_context in service.yaml and run odlc sync-infra."
+                            )
+            continue
+        if not deploy_connected:
+            continue
+        root = str(component.get("path") or f"components/{name}")
+        if not (repo_dir / root / "Dockerfile").is_file():
+            errors.append(
+                f"{name}: no Dockerfile in {root}. "
+                "Set docker_context and dockerfile in service.yaml and run odlc sync-infra."
+            )
+    return errors, notes
+
+
 def inspect_repo(repo_dir: Path) -> dict:
     manifest_path = repo_dir / "service.yaml"
     has_manifest = manifest_path.is_file()
@@ -413,6 +503,17 @@ def inspect_repo(repo_dir: Path) -> dict:
                 if wd != "." and not (repo_dir / wd).is_dir():
                     ci_path_errors.append(f"ci.yml references missing directory {wd}")
 
+    workflows = repo_dir / ".github" / "workflows"
+    deploy_connected = (workflows / "deploy-staging.yml").is_file() or (
+        workflows / "deploy-production.yml"
+    ).is_file()
+    image_path_errors, image_notes = _image_layout(
+        repo_dir,
+        normalized_data.get("components", []) if normalized_data else [],
+        deploy_connected,
+    )
+    layout_errors = ci_path_errors + image_path_errors
+
     branches = _git_branches(repo_dir)
     has_staging = any(b == "staging" or b.endswith("/staging") for b in branches)
     has_production = any(b == "production" or b.endswith("/production") for b in branches)
@@ -500,20 +601,20 @@ def inspect_repo(repo_dir: Path) -> dict:
             "area": "GitHub Workflows (.github/workflows)",
             "current": (
                 "ci.yml present (valid paths)"
-                if (ci_file.is_file() and not ci_path_errors)
+                if (ci_file.is_file() and not layout_errors)
                 else (
-                    "ci.yml has broken paths: " + "; ".join(ci_path_errors)
+                    "broken paths: " + "; ".join(layout_errors)
                     if ci_file.is_file()
                     else "Missing ci.yml"
                 )
             ),
             "target": "PR-only ci.yml matching repo paths + plan/deploy workflows",
             "status": "Up to the mark"
-            if (ci_file.is_file() and not ci_path_errors)
+            if (ci_file.is_file() and not layout_errors)
             else "Needs fix / Missing",
             "action": "None"
-            if (ci_file.is_file() and not ci_path_errors)
-            else "Set component `path` / `frontend_path` and run `odlc sync-infra`",
+            if (ci_file.is_file() and not layout_errors)
+            else "Set component path, docker_context, and dockerfile in service.yaml and run `odlc sync-infra`",
         },
         {
             "id": 7,
@@ -697,7 +798,7 @@ def inspect_repo(repo_dir: Path) -> dict:
         and not manifest_errors
         and not rule_errors
         and not missing_hygiene
-        and not ci_path_errors
+        and not layout_errors
     )
 
     return {
@@ -709,6 +810,8 @@ def inspect_repo(repo_dir: Path) -> dict:
         "rule_errors": rule_errors,
         "missing_hygiene": missing_hygiene,
         "ci_path_errors": ci_path_errors,
+        "image_path_errors": image_path_errors,
+        "image_notes": image_notes,
         "openspec": {
             "cli_installed": has_openspec_cli,
             "dir_present": has_openspec_dir,
@@ -745,7 +848,7 @@ MEANS = {
     14: "This is the page a teammate reads first. After it matches the repo, they can run, test, and deploy without guessing.",
     15: "This lets you run and test on your laptop first. After it is in place, open the devcontainer or copy `.env.example` to `.env` and run `make setup && make dev` before pushing to staging.",
     16: "This ensures every Cloud Run service, job, scheduler entry, queue, secret, and bucket in shared GCP projects starts with your project prefix (`<prefix>-<resource>`) so resources are easy to identify and never collide.",
-    17: "This runs fast secret/branch/manifest checks on `git commit` and runs `make ci` (lint + tests) on `git push` so broken code or secrets never leave your laptop.",
+    17: "This runs fast secret/branch/manifest checks on `git commit` and runs `make ci` (lint, tests, and the deploy image build) on `git push` so a broken image or a bad path never leaves your laptop.",
 }
 
 PILLAR_MEANS = {
@@ -789,6 +892,10 @@ def render_tables(report: dict) -> str:
         lines.append(
             f"| **{num}** | **{pillar['title']}** | {pillar['current']} | **{mark}** | {pillar['action']} | {means} |"
         )
+    notes = report.get("image_notes") or []
+    if notes:
+        lines += ["", "### Image build notes", ""]
+        lines.extend(f"- {note}" for note in notes)
     return "\n".join(lines) + "\n"
 
 
@@ -812,8 +919,11 @@ def main(argv: list[str] | None = None) -> int:
             report["manifest_errors"]
             + report["rule_errors"]
             + report["ci_path_errors"]
+            + report["image_path_errors"]
         ):
             print(f"  - {err}", file=sys.stderr)
+        for note in report["image_notes"]:
+            print(f"  - {note}")
         for missing in report["missing_hygiene"]:
             print(f"  - missing {missing}", file=sys.stderr)
 

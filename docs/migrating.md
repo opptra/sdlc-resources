@@ -20,6 +20,8 @@ Protect `main` and `production` with [scripts/protect-branches.sh](../scripts/pr
 
 The reusable CI workflow expects `pyproject.toml` and `frontend/` at the repo root, matching the template. An existing repo that is laid out differently should pass `working_directory` only if the whole app lives in one subdirectory. If Python and the UI are split in a way the workflow cannot see, change the caller to the layout and keep the check name stable. Ask in the `opptra/sdlc-resources` review rather than inventing a second pipeline.
 
+The deploy workflows build `Dockerfile` in the component directory. When the Dockerfile, or the files it copies, live somewhere else in the repo, set `docker_context` and `dockerfile` on the component. Both paths stay inside the repo, and the Dockerfile stays inside the context. That pair is the shared workflow's input.
+
 Repos with no tests pass `run_tests: false` until the first test file exists. After that, remove the input and let CI discover the tests.
 
 Deploy is still the old path at the end of this step.

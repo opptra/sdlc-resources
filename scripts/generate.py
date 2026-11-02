@@ -412,6 +412,10 @@ def write_component_manifest(app: dict, component: dict, dest: Path) -> None:
         lines.append(f"extra_roles: [{roles}]")
     if component.get("custom_terraform"):
         lines.append("custom_terraform: true")
+    if component.get("docker_context"):
+        lines.append(f"docker_context: {json.dumps(str(component['docker_context']))}")
+    if component.get("dockerfile"):
+        lines.append(f"dockerfile: {json.dumps(str(component['dockerfile']))}")
     env = component.get("env")
     if isinstance(env, dict) and env:
         lines.append(dump({"env": env}).rstrip("\n"))
@@ -994,6 +998,10 @@ def write_workflows(mapping: dict, components: list[dict], dest: Path, include_d
                     plan_jobs.append((job_id, spec["workflow"], args))
             elif capability.startswith("deploy-"):
                 if include_deploy:
+                    if component.get("docker_context"):
+                        args["docker_context"] = str(component["docker_context"])
+                    if component.get("dockerfile"):
+                        args["dockerfile"] = str(component["dockerfile"])
                     deploy_staging.append(
                         (job_id, spec["workflow"], {**args, "environment": "staging"})
                     )
@@ -1098,21 +1106,18 @@ def write_deploy(path: Path, branch: str, jobs: list, repo: str, ref: str) -> No
     for job_id, workflow, args in jobs:
         environment = args["environment"]
         suffix = "PROD" if environment == "prod" else "STAGING"
-        body.append(
-            workflow_call(
-                job_id,
-                workflow,
-                repo,
-                ref,
-                {
-                    "environment": environment,
-                    "working_directory": args["working_directory"],
-                    "manifest": args["manifest"],
-                    "wif_provider": f"${{{{ vars.WIF_PROVIDER_{suffix} }}}}",
-                    "wif_service_account": f"${{{{ vars.WIF_SERVICE_ACCOUNT_{suffix} }}}}",
-                },
-            )
-        )
+        call_args = {
+            "environment": environment,
+            "working_directory": args["working_directory"],
+            "manifest": args["manifest"],
+        }
+        if args.get("docker_context"):
+            call_args["docker_context"] = args["docker_context"]
+        if args.get("dockerfile"):
+            call_args["dockerfile"] = args["dockerfile"]
+        call_args["wif_provider"] = f"${{{{ vars.WIF_PROVIDER_{suffix} }}}}"
+        call_args["wif_service_account"] = f"${{{{ vars.WIF_SERVICE_ACCOUNT_{suffix} }}}}"
+        body.append(workflow_call(job_id, workflow, repo, ref, call_args))
     path.write_text("\n".join(body) + "\n")
 
 
@@ -1267,7 +1272,46 @@ def write_readme(app: dict, components: list[dict], dest: Path) -> None:
     readme_path.write_text(new_text)
 
 
-def write_local_dev_files(app: dict, components: list[dict], dest: Path) -> None:
+def _sh_quote(value: str) -> str:
+    return "'" + value.replace("'", "'\\''") + "'"
+
+
+def image_build_recipe(component: dict) -> str | None:
+    """The docker build the shared deploy workflow runs for this component."""
+    parts = set(component.get("parts") or [])
+    if not parts & {"api", "job", "worker"}:
+        return None
+    context = component.get("docker_context")
+    dockerfile = component.get("dockerfile")
+    if context and dockerfile:
+        return f"\tdocker build -f {_sh_quote(str(dockerfile))} {_sh_quote(str(context))}"
+    root = str(component.get("path") or f"components/{component['name']}")
+    if root == ".":
+        return "\tdocker build ."
+    return f"\tdocker build {_sh_quote(root)}"
+
+
+def terraform_validate_recipes(components: list[dict]) -> list[str]:
+    lines: list[str] = []
+    seen: set[str] = set()
+    for component in components:
+        if component.get("archetype") == "config-only":
+            continue
+        root = str(component.get("path") or f"components/{component['name']}")
+        infra = "infra" if root == "." else f"{root}/infra"
+        if infra in seen:
+            continue
+        seen.add(infra)
+        lines.append(
+            "\t@if command -v terraform >/dev/null 2>&1; then "
+            f"(cd {_sh_quote(infra)} && terraform init -backend=false -input=false >/dev/null && terraform validate); fi"
+        )
+    return lines
+
+
+def write_local_dev_files(
+    app: dict, components: list[dict], dest: Path, build_images: bool = True
+) -> None:
     all_Runnable = [c for c in components if c.get("archetype") != "config-only"]
     if not all_Runnable:
         return
@@ -1458,6 +1502,18 @@ def write_local_dev_files(app: dict, components: list[dict], dest: Path) -> None
     ci_cmds.append(
         "\t@if command -v terraform >/dev/null 2>&1; then terraform fmt -check -recursive; fi"
     )
+    if build_images:
+        build_lines: list[str] = []
+        for component in all_Runnable:
+            recipe = image_build_recipe(component)
+            if recipe and recipe not in build_lines:
+                build_lines.append(recipe)
+        if build_lines:
+            ci_cmds.append(
+                '\t@command -v docker >/dev/null 2>&1 || { echo "docker is required to build the deploy image" >&2; exit 1; }'
+            )
+            ci_cmds.extend(build_lines)
+        ci_cmds.extend(terraform_validate_recipes(all_Runnable))
 
     makefile_path = dest / "Makefile"
     if not makefile_path.is_file() or "setup:" in makefile_path.read_text(errors="ignore"):
@@ -1759,7 +1815,7 @@ def phase_sync_infra(manifest_path: Path, dest: Path, ci_only: bool = False) -> 
             if comp_dir.is_dir():
                 sync_runtime_sdk(component, comp_dir)
     write_workflows(mapping, components, dest, include_deploy=not ci_only)
-    write_local_dev_files(app, components, dest)
+    write_local_dev_files(app, components, dest, build_images=not ci_only)
     write_bind_script(app, dest)
     write_readme(app, components, dest)
 

@@ -95,6 +95,8 @@ ALLOWED_COMPONENT_KEYS = {
     "region",
     "path",
     "frontend_path",
+    "docker_context",
+    "dockerfile",
     "auth",
     "parts",
     "database",
@@ -375,6 +377,45 @@ def _normalize_component_fields(comp: dict, default_region: str = "asia-south1")
                     comp["secrets"].append(s)
 
 
+def _repo_relative(value: object) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return False
+    parts = Path(value).parts
+    return not value.startswith(("/", "\\")) and ".." not in parts and "\\" not in value
+
+
+def _path_inside(context: str, dockerfile: str) -> bool:
+    ctx = Path(context)
+    df = Path(dockerfile)
+    if str(ctx) in {".", ""}:
+        return True
+    return df == ctx or ctx in df.parents
+
+
+def _docker_build_errors(cname: str, component: dict) -> list[str]:
+    """docker_context and dockerfile are a pair of repo-relative paths, or both absent."""
+    context = component.get("docker_context")
+    dockerfile = component.get("dockerfile")
+    if context is None and dockerfile is None:
+        return []
+    errors: list[str] = []
+    if context is None or dockerfile is None:
+        errors.append(f"{cname}: set docker_context and dockerfile together")
+    if context is not None and not _repo_relative(context):
+        errors.append(f"{cname}: docker_context must be a path inside the repo")
+    if dockerfile is not None and not _repo_relative(dockerfile):
+        errors.append(f"{cname}: dockerfile must be a path inside the repo")
+    if (
+        isinstance(context, str)
+        and isinstance(dockerfile, str)
+        and _repo_relative(context)
+        and _repo_relative(dockerfile)
+        and not _path_inside(context, dockerfile)
+    ):
+        errors.append(f"{cname}: dockerfile must be inside docker_context")
+    return errors
+
+
 def check(data: dict) -> list[str]:
     schema = json.loads((ROOT / "service.schema.json").read_text())
     errors: list[str] = []
@@ -542,6 +583,7 @@ def check(data: dict) -> list[str]:
             for key in env:
                 if SECRET_ID.fullmatch(str(key)) is None:
                     errors.append(f"{cname}: env {key!r} must be an environment variable name")
+        errors.extend(_docker_build_errors(cname, component))
 
         receiver = component.get("receiver")
         if receiver is not None:

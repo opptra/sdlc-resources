@@ -30,6 +30,24 @@ _DOCKER_CMD_RE = re.compile(r"^\s*(?:CMD|ENTRYPOINT)\s+(.*)$", re.M)
 _SENSITIVE_ENV_RE = re.compile(r"(?:SECRET|TOKEN|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|CREDENTIAL|AUTH_KEY|DSN)$", re.I)
 _IAM_ROLE_RE = re.compile(r"--role[=\s]+[\"']?(roles/[A-Za-z0-9._-]+)[\"']?")
 _CLOUDSQL_FLAG_RE = re.compile(r"--(?:add|set)-cloudsql-instances[=\s]+[\"']?([a-zA-Z0-9_:.-]+)[\"']?")
+_GCLOUD_COMMAND_RE = re.compile(r"--command(?:=|\s+)(\"[^\"]*\"|'[^']*'|\S+)")
+_GCLOUD_ARGS_RE = re.compile(r"--args(?:=|\s+)(\"[^\"]*\"|'[^']*'|\S+)")
+_BUILD_VALUE_FLAGS = {
+    "-f",
+    "--file",
+    "-t",
+    "--tag",
+    "--build-arg",
+    "--target",
+    "--platform",
+    "-o",
+    "--output",
+    "--iidfile",
+    "--label",
+    "--network",
+    "--secret",
+    "--ssh",
+}
 _PUBSUB_TOPIC_RE = re.compile(r"gcloud\s+pubsub\s+topics\s+create\s+[\"']?([a-zA-Z0-9_-]+)[\"']?")
 _REDIS_INSTANCE_RE = re.compile(r"gcloud\s+redis\s+instances\s+create\s+[\"']?([a-zA-Z0-9_-]+)[\"']?")
 
@@ -46,6 +64,147 @@ def _resolve_shell_vars(text: str, env_vars: dict[str, str]) -> str:
     for k, v in env_vars.items():
         out = out.replace(f"${{{k}}}", v).replace(f"${k}", v)
     return out
+
+
+def _norm_repo_path(value: str) -> str | None:
+    path = value.strip().strip("'\"")
+    if path.startswith("./"):
+        path = path[2:]
+    if not path or path.startswith(("/", "\\")) or ".." in Path(path).parts:
+        return None
+    return path or "."
+
+
+def _parse_build_args(tokens: list[str]) -> tuple[str, str] | None:
+    dockerfile = None
+    positional: list[str] = []
+    index = 0
+    while index < len(tokens):
+        tok = tokens[index].strip("'\"")
+        if tok in _BUILD_VALUE_FLAGS and index + 1 < len(tokens):
+            val = tokens[index + 1].strip("'\"")
+            if tok in {"-f", "--file"}:
+                dockerfile = val
+            index += 2
+            continue
+        if tok.startswith("--file="):
+            dockerfile = tok.split("=", 1)[1].strip("'\"")
+            index += 1
+            continue
+        if tok.startswith("-"):
+            index += 1
+            continue
+        positional.append(tok)
+        index += 1
+    if dockerfile is None and not positional:
+        return None
+    context = _norm_repo_path(positional[-1] if positional else ".")
+    if context is None:
+        return None
+    if dockerfile is None:
+        dockerfile = str(Path(context) / "Dockerfile")
+    dockerfile = _norm_repo_path(dockerfile)
+    if dockerfile is None:
+        return None
+    return context, dockerfile
+
+
+def _build_arg_lists(text: str) -> list[list[str]]:
+    flat = text.replace("\\\n", " ")
+    lists: list[list[str]] = []
+    for match in re.finditer(r"docker\s+build\b([^\n]*)", flat):
+        lists.append(match.group(1).split())
+    for match in re.finditer(r"cloud-builders/docker(.*?)(?:\n\s*- name:|\Z)", text, re.S):
+        args = re.findall(r"^\s*-\s+[\"']?([^\"'\n#]+)[\"']?\s*$", match.group(1), re.M)
+        if args and args[0] == "build":
+            lists.append(args[1:])
+    return lists
+
+
+def _copy_sources(dockerfile_text: str) -> list[str]:
+    sources: list[str] = []
+    for raw in dockerfile_text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line.upper().startswith(("COPY ", "ADD ")) or "--from=" in line.lower():
+            continue
+        body = line.split(None, 1)[1].strip()
+        if body.startswith("["):
+            try:
+                parts = json.loads(body)
+            except json.JSONDecodeError:
+                continue
+            tokens = [str(part) for part in parts[:-1]]
+        else:
+            tokens = [tok for tok in body.split() if not tok.startswith("--")][:-1]
+        sources.extend(
+            src for src in tokens if not src.startswith(("http://", "https://", "$"))
+        )
+    return sources
+
+
+def _source_exists(base: Path, src: str) -> bool:
+    candidate = base / (Path(src).parent if "*" in src or "?" in src else src)
+    try:
+        candidate.resolve().relative_to(base.resolve())
+    except ValueError:
+        return False
+    if "*" in src or "?" in src:
+        return candidate.is_dir()
+    return candidate.exists()
+
+
+def _context_for_dockerfile(repo_dir: Path, rel_df: str) -> str:
+    parent = str(Path(rel_df).parent)
+    if parent == ".":
+        return "."
+    sources = _copy_sources((repo_dir / rel_df).read_text(errors="ignore"))
+    if not sources or all(_source_exists(repo_dir / parent, src) for src in sources):
+        return parent
+    if all(_source_exists(repo_dir, src) for src in sources):
+        return "."
+    return parent
+
+
+def _ignored_dockerfile(rel: str) -> bool:
+    return any(part in {".git", ".venv", "node_modules", "infra"} for part in Path(rel).parts)
+
+
+def _choose_docker_build(repo_dir: Path, shell_files: list[Path], dockerfiles: list[Path]) -> dict | None:
+    """The build the existing deploy runs, when it is not `<path>/Dockerfile` at the repo root."""
+    existing = {
+        str(path.relative_to(repo_dir))
+        for path in dockerfiles
+        if not _ignored_dockerfile(str(path.relative_to(repo_dir)))
+    }
+    parsed: list[tuple[str, str]] = []
+    for shell in shell_files:
+        for args in _build_arg_lists(shell.read_text(errors="ignore")):
+            found = _parse_build_args(args)
+            if found:
+                parsed.append(found)
+    for context, dockerfile in parsed:
+        if dockerfile in existing or (repo_dir / dockerfile).is_file():
+            if context == "." and dockerfile == "Dockerfile":
+                return None
+            return {"context": context, "dockerfile": dockerfile}
+    rels = sorted(existing, key=len)
+    if not rels:
+        return None
+    chosen = "Dockerfile" if "Dockerfile" in existing else rels[0]
+    context = _context_for_dockerfile(repo_dir, chosen)
+    if context == "." and chosen == "Dockerfile":
+        return None
+    return {"context": context, "dockerfile": chosen}
+
+
+def _gcloud_run_command(body: str) -> str | None:
+    command_m = _GCLOUD_COMMAND_RE.search(body)
+    args_m = _GCLOUD_ARGS_RE.search(body)
+    command = command_m.group(1).strip("'\"") if command_m else ""
+    args = args_m.group(1).strip("'\"") if args_m else ""
+    if command and args:
+        return f"{command} {' '.join(part for part in args.split(',') if part)}".strip()
+    return command or args or None
 
 
 def discover_repo(repo_dir: Path) -> dict:
@@ -187,16 +346,18 @@ def discover_repo(repo_dir: Path) -> dict:
             for tok in loop_m.group(1).split():
                 tok_clean = tok.strip("\"'")
                 if tok_clean and not tok_clean.startswith("$"):
-                    jobs.append(
-                        {
-                            "name": tok_clean,
-                            "source": rel,
-                            "region": sh_vars.get("REGION", "asia-south1"),
-                            "memory": "2Gi",
-                            "timeout_seconds": 3000,
-                            "secrets": [],
-                        }
-                    )
+                    job = {
+                        "name": tok_clean,
+                        "source": rel,
+                        "region": sh_vars.get("REGION", "asia-south1"),
+                        "memory": "2Gi",
+                        "timeout_seconds": 3000,
+                        "secrets": [],
+                    }
+                    command = _gcloud_run_command(raw)
+                    if command:
+                        job["command"] = command
+                    jobs.append(job)
 
         for match in _GCLOUD_SVC_RE.finditer(resolved):
             name = match.group(1).strip("\"'")
@@ -247,16 +408,18 @@ def discover_repo(repo_dir: Path) -> dict:
                     secrets_found.append(s)
             if any(j["name"] == name for j in jobs):
                 continue
-            jobs.append(
-                {
-                    "name": name,
-                    "source": rel,
-                    "region": region,
-                    "memory": mem_m.group(1) if mem_m else "1Gi",
-                    "timeout_seconds": int(timeout_m.group(1)) if timeout_m else 1800,
-                    "secrets": sec_ids,
-                }
-            )
+            job = {
+                "name": name,
+                "source": rel,
+                "region": region,
+                "memory": mem_m.group(1) if mem_m else "1Gi",
+                "timeout_seconds": int(timeout_m.group(1)) if timeout_m else 1800,
+                "secrets": sec_ids,
+            }
+            command = _gcloud_run_command(body)
+            if command:
+                job["command"] = command
+            jobs.append(job)
 
     # Check dependency files and SQL for data stores
     pyprojects = [
@@ -377,6 +540,7 @@ def discover_repo(repo_dir: Path) -> dict:
         "has_ui": has_ui,
         "dockerfiles": [str(d.relative_to(repo_dir)) for d in dockerfiles],
         "dockerfile_commands": dockerfile_commands,
+        "docker_build": _choose_docker_build(repo_dir, shell_files, dockerfiles),
         "shell_scripts": [str(s.relative_to(repo_dir)) for s in shell_files],
         "legacy_hosts": legacy_hosts,
         "services": services,
@@ -435,6 +599,29 @@ def propose_manifest(report: dict) -> str:
     postgres_external = bool(report.get("postgres_external", False))
 
     components: list[dict] = []
+
+    def apply_build(comp: dict) -> None:
+        build = report.get("docker_build") or {}
+        parts = set(comp.get("parts") or [])
+        if not build or not parts & {"api", "job", "worker"}:
+            return
+        comp["docker_context"] = build["context"]
+        comp["dockerfile"] = build["dockerfile"]
+
+    def job_command(job: dict, module_name: str) -> str:
+        if job.get("command"):
+            return str(job["command"])
+        jobs = report.get("jobs") or []
+        commands = report.get("dockerfile_commands") or {}
+        build = report.get("docker_build") or {}
+        if len(jobs) == 1 and not report.get("services"):
+            dockerfile = str(build.get("dockerfile") or "")
+            if dockerfile and dockerfile in commands:
+                return str(commands[dockerfile])
+            if len(commands) == 1:
+                return str(next(iter(commands.values())))
+        return f"python -m app.jobs.{module_name}"
+
     for svc in report.get("services", []):
         raw_svc_name = str(svc["name"])
         parts = ["ui", "api"] if report.get("has_ui") else ["api"]
@@ -465,6 +652,7 @@ def propose_manifest(report: dict) -> str:
                 comp["postgres_instance"] = cloudsql_instances[0]
             elif postgres_external:
                 comp["postgres_external"] = True
+        apply_build(comp)
         components.append(comp)
 
     if report.get("jobs"):
@@ -475,7 +663,7 @@ def propose_manifest(report: dict) -> str:
             job_entries.append(
                 {
                     "name": jname,
-                    "command": f"python -m app.jobs.{py_mod}",
+                    "command": job_command(j, py_mod),
                     "enabled": True,
                     "timezone": "Asia/Kolkata",
                     "schedules": [],
@@ -510,6 +698,7 @@ def propose_manifest(report: dict) -> str:
                 comp["postgres_instance"] = cloudsql_instances[0]
             elif postgres_external:
                 comp["postgres_external"] = True
+        apply_build(comp)
         components.append(comp)
 
     if not components:
@@ -539,6 +728,7 @@ def propose_manifest(report: dict) -> str:
                 comp["postgres_instance"] = cloudsql_instances[0]
             elif postgres_external:
                 comp["postgres_external"] = True
+        apply_build(comp)
         components.append(comp)
 
     manifest = {

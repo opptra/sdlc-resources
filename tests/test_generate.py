@@ -67,6 +67,7 @@ def test_generate_selects_capabilities() -> None:
         assert "branches: [staging]" in deploy_staging
         assert "deploy-cloud-run.yml" in deploy_staging
         assert "deploy-job.yml" in deploy_staging
+        assert "docker_context:" not in deploy_staging
         production = (dest / ".github" / "workflows" / "deploy-production.yml").read_text()
         assert "branches: [production]" in production
         assert "opptra/sdlc-resources/.github/workflows/deploy-job.yml@main" in production
@@ -339,6 +340,7 @@ components:
         assert "working_directory: apps/web" in ci_text
         assert "components/noon-pipeline" not in ci_text
         assert "components/blinkit-pipeline" not in ci_text
+        assert "docker build" not in (repo / "Makefile").read_text()
 
         # status --check passes with zero ci_path_errors
         res = subprocess.run(
@@ -802,3 +804,194 @@ components:
         ).stdout
         assert "postgres_instance: \"opptra-applications:asia-south1:existing-pg\"" in prop_csql
         assert "postgres_external:" not in prop_csql
+
+
+def test_docker_context_is_passed_only_when_set() -> None:
+    manifest_yaml = """name: image-root
+purpose: Build one job image from the repository root.
+prod_project: opptra-applications
+region: asia-south1
+components:
+  - name: jobs
+    archetype: scheduled-jobs
+    auth: none
+    parts: [job]
+    docker_context: .
+    dockerfile: backend/Dockerfile
+    jobs:
+      - name: tick
+        command: python -m app.jobs.tick
+  - name: plain
+    archetype: scheduled-jobs
+    auth: none
+    parts: [job]
+    jobs:
+      - name: nightly
+        command: python -m app.jobs.nightly
+"""
+    with tempfile.TemporaryDirectory() as tmp:
+        manifest = Path(tmp) / "service.yaml"
+        manifest.write_text(manifest_yaml)
+        dest = Path(tmp) / "app"
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "generate.py"), str(manifest), str(dest)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        deploy = (dest / ".github" / "workflows" / "deploy-staging.yml").read_text()
+        jobs_block = deploy.split("deploy-job-jobs:")[1].split("deploy-job-plain:")[0]
+        plain_block = deploy.split("deploy-job-plain:")[1]
+        assert "docker_context: ." in jobs_block
+        assert "dockerfile: backend/Dockerfile" in jobs_block
+        assert "docker_context:" not in plain_block
+        assert "dockerfile:" not in plain_block
+        component = (dest / "components" / "jobs" / "service.yaml").read_text()
+        assert 'docker_context: "."' in component
+        assert 'dockerfile: "backend/Dockerfile"' in component
+        makefile = (dest / "Makefile").read_text()
+        assert "docker build -f 'backend/Dockerfile' '.'" in makefile
+        assert "terraform init -backend=false" in makefile
+
+
+def test_docker_context_must_be_a_pair_inside_the_repo() -> None:
+    base = """name: image-root
+purpose: Build one job image from the repository root.
+prod_project: opptra-applications
+region: asia-south1
+components:
+  - name: jobs
+    archetype: scheduled-jobs
+    auth: none
+    parts: [job]
+    {extra}
+    jobs:
+      - name: tick
+        command: python -m app.jobs.tick
+"""
+    for extra, expected in (
+        ("docker_context: .", "set docker_context and dockerfile together"),
+        ("dockerfile: ../Dockerfile", "dockerfile must be a path inside the repo"),
+        (
+            "docker_context: backend\n    dockerfile: Dockerfile",
+            "dockerfile must be inside docker_context",
+        ),
+    ):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "service.yaml"
+            path.write_text(base.format(extra=extra))
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "scripts" / "check_manifest.py"), str(path)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            assert result.returncode == 1
+            assert expected in result.stderr
+
+
+def test_discover_proposes_the_dockerfile_the_repo_already_builds() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp) / "jobs-repo"
+        (repo / "backend").mkdir(parents=True)
+        (repo / "backend" / "Dockerfile").write_text(
+            "FROM python:3.12-slim\n"
+            "COPY app /app\n"
+            'CMD ["python", "-m", "app.jobs.tick"]\n'
+        )
+        (repo / "backend" / "app").mkdir()
+        (repo / "deploy.sh").write_text(
+            "gcloud run jobs deploy tick --region asia-south1 "
+            "--command=python --args=-m,app.tick\n"
+            "docker build -f backend/Dockerfile -t tick .\n"
+        )
+        proposed = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "odlc.py"),
+                "discover-infra",
+                str(repo),
+                "--propose-manifest",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert "docker_context: ." in proposed
+        assert "dockerfile: backend/Dockerfile" in proposed
+        assert "command: python -m app.tick" in proposed
+
+
+def test_status_fails_when_the_declared_dockerfile_is_missing() -> None:
+    manifest_yaml = """name: image-root
+purpose: Build one job image from the repository root.
+prod_project: opptra-applications
+region: asia-south1
+components:
+  - name: jobs
+    archetype: scheduled-jobs
+    auth: none
+    parts: [job]
+    path: .
+    docker_context: .
+    dockerfile: backend/Dockerfile
+    jobs:
+      - name: tick
+        command: python -m app.jobs.tick
+"""
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp) / "app"
+        repo.mkdir()
+        (repo / "service.yaml").write_text(manifest_yaml)
+        (repo / ".github" / "workflows").mkdir(parents=True)
+        (repo / ".github" / "workflows" / "deploy-staging.yml").write_text("name: deploy\n")
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "odlc.py"), "status", str(repo), "--check"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 1
+        assert "dockerfile backend/Dockerfile is not a file" in result.stderr
+
+
+def test_status_notes_a_copy_outside_the_context() -> None:
+    manifest_yaml = """name: image-root
+purpose: Build one job image from the repository root.
+prod_project: opptra-applications
+region: asia-south1
+components:
+  - name: jobs
+    archetype: scheduled-jobs
+    auth: none
+    parts: [job]
+    path: backend
+    docker_context: backend
+    dockerfile: backend/Dockerfile
+    jobs:
+      - name: tick
+        command: python -m app.jobs.tick
+"""
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp) / "app"
+        (repo / "backend").mkdir(parents=True)
+        (repo / "service.yaml").write_text(manifest_yaml)
+        (repo / "backend" / "Dockerfile").write_text("FROM python:3.12-slim\nCOPY ../shared /shared\n")
+        (repo / ".github" / "workflows").mkdir(parents=True)
+        (repo / ".github" / "workflows" / "ci.yml").write_text("name: ci\n")
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "odlc.py"),
+                "status",
+                str(repo),
+                "--json",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        report = json.loads(result.stdout)
+        assert any("COPY ../shared" in note for note in report["image_notes"])

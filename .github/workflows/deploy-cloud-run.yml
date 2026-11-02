@@ -18,6 +18,16 @@ on:
       working_directory:
         required: true
         type: string
+      docker_context:
+        description: Repo-relative Docker build context. Empty builds inside working_directory.
+        required: false
+        type: string
+        default: ""
+      dockerfile:
+        description: Repo-relative Dockerfile. Set it together with docker_context.
+        required: false
+        type: string
+        default: ""
       staging_project:
         type: string
         default: opptra-staging
@@ -92,10 +102,23 @@ jobs:
         env:
           IMAGE: ${{ steps.manifest.outputs.image }}
           REGION: ${{ steps.manifest.outputs.region }}
+          DOCKER_CONTEXT: ${{ inputs.docker_context }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
         working-directory: ${{ inputs.working_directory }}
         run: |
           gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
-          docker build -t "$IMAGE" .
+          if [ -n "${DOCKER_CONTEXT}" ] || [ -n "${DOCKERFILE}" ]; then
+            case "${DOCKER_CONTEXT}${DOCKERFILE}" in
+              *..*) echo "docker_context and dockerfile must stay inside the repo" >&2; exit 1 ;;
+            esac
+            if [ -z "${DOCKER_CONTEXT}" ] || [ -z "${DOCKERFILE}" ]; then
+              echo "Set docker_context and dockerfile together." >&2
+              exit 1
+            fi
+            docker build -f "$GITHUB_WORKSPACE/${DOCKERFILE}" -t "$IMAGE" "$GITHUB_WORKSPACE/${DOCKER_CONTEXT}"
+          else
+            docker build -t "$IMAGE" .
+          fi
           docker push "$IMAGE"
       - name: Apply
         env:
