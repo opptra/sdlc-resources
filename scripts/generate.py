@@ -1768,6 +1768,7 @@ def write_repo_hygiene(dest: Path) -> None:
         "yaml_subset.py",
         "check_secret_versions.py",
         "check_firestore.py",
+        "summarize_plan.py",
     ):
         shutil.copy2(ROOT / "scripts" / filename, scripts_dir / filename)
 

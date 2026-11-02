@@ -7,7 +7,7 @@ It declares:
 - Runtime service account `<name>-rt`
 - One Cloud Run job per entry. Underscores in the job name become hyphens, because Cloud Run rejects underscores.
 - `RESOURCE_PREFIX`, a bucket name, and other plain settings as environment variables
-- Each listed secret mounted back into the variable name the process reads, from `<prefix>-<ENV_NAME>` at `latest`
+- Each listed secret mounted back into the variable name the process reads, from `secret_map` when that variable is mapped, otherwise from `<prefix>-<ENV_NAME>`, at `latest`
 - Read access on those secrets for this account, finished before the job is saved
 
 The secret shells come from [modules/secrets](../secrets/). This module does not create them. A job name is not part of the secret id.

@@ -84,23 +84,80 @@ jobs:
             -backend-config="bucket=${PROJECT}-tfstate" \
             -backend-config="prefix=${NAME}"
           terraform plan -input=false -no-color -lock-timeout=120s \
-            -var-file=ci.auto.tfvars.json -out=tfplan | tee plan.txt
+            -var-file=ci.auto.tfvars.json -out=tfplan
+          terraform show -no-color tfplan > plan-show.txt
+          terraform show -json tfplan > plan.json
+      - name: Summarize the plan
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          PROJECT: ${{ steps.manifest.outputs.project_id }}
+          WORKDIR: ${{ inputs.working_directory }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          infra="$GITHUB_WORKSPACE/$WORKDIR/infra"
+          if [ -f "$GITHUB_WORKSPACE/scripts/summarize_plan.py" ]; then
+            ARTIFACT=$(python3 "$GITHUB_WORKSPACE/scripts/summarize_plan.py" \
+              --print-artifact-name \
+              --environment "$ENVIRONMENT" \
+              --component "$WORKDIR")
+            python3 "$GITHUB_WORKSPACE/scripts/summarize_plan.py" \
+              --plan "$infra/plan.json" \
+              --environment "$ENVIRONMENT" \
+              --project "$PROJECT" \
+              --component "$WORKDIR" \
+              --artifact "$ARTIFACT" \
+              --run-url "$RUN_URL" \
+              --out /tmp/plan-comment.md
+          else
+            {
+              echo "<!-- terraform-plan: ${ENVIRONMENT}:${WORKDIR} -->"
+              echo "### Terraform plan · ${ENVIRONMENT} · ${WORKDIR}"
+              echo "Plan only. ${PROJECT} is unchanged."
+              echo
+              echo "Run \`odlc sync-infra\` and commit \`scripts/summarize_plan.py\` for the short summary. Until then, this is \`terraform show\` for the saved plan."
+              echo
+              echo '```'
+              tail -c 20000 "$infra/plan-show.txt"
+              echo
+              echo '```'
+              echo
+              echo "Full plan: [this run](${RUN_URL})"
+            } > /tmp/plan-comment.md
+          fi
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            tail -n +2 /tmp/plan-comment.md >> "$GITHUB_STEP_SUMMARY"
+            echo >> "$GITHUB_STEP_SUMMARY"
+            echo "### Full plan" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            head -c 100000 "$infra/plan-show.txt" >> "$GITHUB_STEP_SUMMARY"
+            echo >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Comment the plan
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ inputs.pr_number }}
           ENVIRONMENT: ${{ inputs.environment }}
-          PROJECT: ${{ steps.manifest.outputs.project_id }}
+          WORKDIR: ${{ inputs.working_directory }}
         run: |
+          set -euo pipefail
           if [ -z "$PR" ]; then
             exit 0
           fi
-          {
-            echo "Terraform plan for ${ENVIRONMENT} (${PROJECT}). This does not change the project."
-            echo
-            echo '```'
-            head -c 50000 "${{ inputs.working_directory }}/infra/plan.txt"
-            echo
-            echo '```'
-          } > /tmp/plan-comment.md
-          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file /tmp/plan-comment.md
+          MARKER="<!-- terraform-plan: ${ENVIRONMENT}:${WORKDIR} -->"
+          MARKER_JSON=$(printf '%s' "$MARKER" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')
+          COMMENT_ID=$(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" \
+              --jq ".[] | select((.body // \"\") | contains(${MARKER_JSON})) | .id" \
+            | tail -n 1 \
+            | tr -d '"'
+          )
+          if [ -n "$COMMENT_ID" ]; then
+            jq -n --rawfile body /tmp/plan-comment.md '{body:$body}' > /tmp/plan-comment-payload.json
+            gh api --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" \
+              --input /tmp/plan-comment-payload.json
+          else
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file /tmp/plan-comment.md
+          fi

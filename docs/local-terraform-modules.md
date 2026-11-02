@@ -81,8 +81,9 @@ The runner checks out the app. These files have to be in that checkout:
 | `scripts/render_tfvars.py` | Plan and deploy workflows, to write `ci.auto.tfvars.json` |
 | `scripts/yaml_subset.py` | Imported by `render_tfvars.py` |
 | `scripts/check_secret_versions.py` | `deploy-cloud-run` and `deploy-job`, after the secret shells exist |
+| `scripts/summarize_plan.py` | `terraform-plan`, to write the pull request comment |
 
-`init-runtime` and `sync-infra` copy all three from this repository. `sync-infra` also rewrites workflows, rules, and hooks. Use it when the app is missing `check_secret_versions.py`. Use the Python above when the only change is the module copy.
+`init-runtime` and `sync-infra` copy these files from this repository. `sync-infra` also rewrites workflows, rules, and hooks. Use it when the app is missing `check_secret_versions.py` or `summarize_plan.py`. Use the Python above when the only change is the module copy.
 
 Do not run a full `odlc sync-infra` only to refresh modules. That command also rewrites workflows, rules, and hooks.
 
