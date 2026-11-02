@@ -770,3 +770,35 @@ components:
             text=True,
         )
         assert status_res.returncode == 0, status_res.stderr
+
+        # Verify discover-infra --propose-manifest sets postgres_external vs postgres_instance
+        ext_pg_repo = Path(tmp) / "ext-pg-app"
+        ext_pg_repo.mkdir(parents=True)
+        (ext_pg_repo / "requirements.txt").write_text("sqlalchemy>=2.0\npsycopg[binary]>=3.2\n")
+        (ext_pg_repo / "deploy.sh").write_text(
+            "gcloud run deploy ext-pg-app --region asia-south1 --set-secrets=DATABASE_URL=neon-db-url:latest\n"
+        )
+        prop_ext = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "discover-infra", str(ext_pg_repo), "--propose-manifest"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert "postgres_external: true" in prop_ext
+        assert "postgres_instance:" not in prop_ext
+
+        csql_repo = Path(tmp) / "csql-pg-app"
+        csql_repo.mkdir(parents=True)
+        (csql_repo / "requirements.txt").write_text("sqlalchemy>=2.0\n")
+        (csql_repo / "deploy.sh").write_text(
+            "gcloud run deploy csql-pg-app --region asia-south1 "
+            "--add-cloudsql-instances=opptra-applications:asia-south1:existing-pg\n"
+        )
+        prop_csql = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "discover-infra", str(csql_repo), "--propose-manifest"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert "postgres_instance: \"opptra-applications:asia-south1:existing-pg\"" in prop_csql
+        assert "postgres_external:" not in prop_csql

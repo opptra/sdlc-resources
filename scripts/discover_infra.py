@@ -29,6 +29,7 @@ _VAR_ASSIGN_RE = re.compile(r"^([A-Z_][A-Z0-9_]*)=[\"']?([^\"'\n#]+)[\"']?", re.
 _DOCKER_CMD_RE = re.compile(r"^\s*(?:CMD|ENTRYPOINT)\s+(.*)$", re.M)
 _SENSITIVE_ENV_RE = re.compile(r"(?:SECRET|TOKEN|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|CREDENTIAL|AUTH_KEY|DSN)$", re.I)
 _IAM_ROLE_RE = re.compile(r"--role[=\s]+[\"']?(roles/[A-Za-z0-9._-]+)[\"']?")
+_CLOUDSQL_FLAG_RE = re.compile(r"--(?:add|set)-cloudsql-instances[=\s]+[\"']?([a-zA-Z0-9_:.-]+)[\"']?")
 _PUBSUB_TOPIC_RE = re.compile(r"gcloud\s+pubsub\s+topics\s+create\s+[\"']?([a-zA-Z0-9_-]+)[\"']?")
 _REDIS_INSTANCE_RE = re.compile(r"gcloud\s+redis\s+instances\s+create\s+[\"']?([a-zA-Z0-9_-]+)[\"']?")
 
@@ -72,6 +73,8 @@ def discover_repo(repo_dir: Path) -> dict:
     plain_env_found: dict[str, str] = {}
     extra_roles_found: list[str] = []
     custom_resources_found: list[dict] = []
+    cloudsql_instances_found: list[str] = []
+    has_database_url_ref = False
     dockerfile_commands: dict[str, str] = {}
     regions_found: list[str] = []
     prod_project = "opptra-applications"
@@ -100,6 +103,10 @@ def discover_repo(repo_dir: Path) -> dict:
             k, _, v = stripped.partition("=")
             k = k.strip()
             v = v.strip().strip("\"'")
+            if k == "DATABASE_URL" and any(
+                host in v for host in ("neon.tech", "supabase", "amazonaws.com", "sslmode=")
+            ):
+                has_database_url_ref = True
             if not k or k in {
                 "APP_ENV",
                 "SERVICE_NAME",
@@ -143,6 +150,13 @@ def discover_repo(repo_dir: Path) -> dict:
                 secrets_found.append(sec_id)
             if env_var and sec_id:
                 secret_map_found[env_var] = sec_id
+            if env_var == "DATABASE_URL":
+                has_database_url_ref = True
+
+        for csql_m in _CLOUDSQL_FLAG_RE.finditer(resolved):
+            inst = csql_m.group(1).strip()
+            if inst and not inst.startswith("$") and inst not in cloudsql_instances_found:
+                cloudsql_instances_found.append(inst)
 
         for role_m in _IAM_ROLE_RE.finditer(resolved):
             role = role_m.group(1).strip()
@@ -372,6 +386,12 @@ def discover_repo(repo_dir: Path) -> dict:
         "plain_env": plain_env_found,
         "extra_roles": extra_roles_found,
         "custom_resources": custom_resources_found,
+        "cloudsql_instances": cloudsql_instances_found,
+        "postgres_external": bool(
+            "postgres" in stores
+            and not cloudsql_instances_found
+            and (has_database_url_ref or bool(services or jobs))
+        ),
         "stores": stores,
         "resources_table": resources_table,
     }
@@ -411,6 +431,8 @@ def propose_manifest(report: dict) -> str:
     plain_env = report.get("plain_env", {})
     extra_roles = report.get("extra_roles", [])
     has_custom_tf = bool(report.get("custom_resources"))
+    cloudsql_instances = report.get("cloudsql_instances", [])
+    postgres_external = bool(report.get("postgres_external", False))
 
     components: list[dict] = []
     for svc in report.get("services", []):
@@ -438,6 +460,11 @@ def propose_manifest(report: dict) -> str:
             comp["extra_roles"] = extra_roles
         if has_custom_tf:
             comp["custom_terraform"] = True
+        if db == "postgres":
+            if cloudsql_instances:
+                comp["postgres_instance"] = cloudsql_instances[0]
+            elif postgres_external:
+                comp["postgres_external"] = True
         components.append(comp)
 
     if report.get("jobs"):
@@ -478,6 +505,11 @@ def propose_manifest(report: dict) -> str:
             comp["extra_roles"] = extra_roles
         if has_custom_tf:
             comp["custom_terraform"] = True
+        if db == "postgres":
+            if cloudsql_instances:
+                comp["postgres_instance"] = cloudsql_instances[0]
+            elif postgres_external:
+                comp["postgres_external"] = True
         components.append(comp)
 
     if not components:
@@ -502,6 +534,11 @@ def propose_manifest(report: dict) -> str:
             comp["extra_roles"] = extra_roles
         if has_custom_tf:
             comp["custom_terraform"] = True
+        if db == "postgres":
+            if cloudsql_instances:
+                comp["postgres_instance"] = cloudsql_instances[0]
+            elif postgres_external:
+                comp["postgres_external"] = True
         components.append(comp)
 
     manifest = {
