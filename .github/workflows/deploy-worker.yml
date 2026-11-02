@@ -72,19 +72,19 @@ jobs:
         env:
           IMAGE: ${{ steps.manifest.outputs.image }}
           REGION: ${{ steps.manifest.outputs.region }}
-          DOCKER_CONTEXT: ${{ inputs.docker_context }}
+          BUILD_CONTEXT: ${{ inputs.docker_context }}
           DOCKERFILE: ${{ inputs.dockerfile }}
         run: |
           gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
-          if [ -n "${DOCKER_CONTEXT}" ] || [ -n "${DOCKERFILE}" ]; then
-            case "${DOCKER_CONTEXT}${DOCKERFILE}" in
+          if [ -n "${BUILD_CONTEXT}" ] || [ -n "${DOCKERFILE}" ]; then
+            case "${BUILD_CONTEXT}${DOCKERFILE}" in
               *..*) echo "docker_context and dockerfile must stay inside the repo" >&2; exit 1 ;;
             esac
-            if [ -z "${DOCKER_CONTEXT}" ] || [ -z "${DOCKERFILE}" ]; then
+            if [ -z "${BUILD_CONTEXT}" ] || [ -z "${DOCKERFILE}" ]; then
               echo "Set docker_context and dockerfile together." >&2
               exit 1
             fi
-            docker build -f "$GITHUB_WORKSPACE/${DOCKERFILE}" -t "$IMAGE" "$GITHUB_WORKSPACE/${DOCKER_CONTEXT}"
+            docker build -f "$GITHUB_WORKSPACE/${DOCKERFILE}" -t "$IMAGE" "$GITHUB_WORKSPACE/${BUILD_CONTEXT}"
           else
             docker build -t "$IMAGE" .
           fi
