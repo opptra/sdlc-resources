@@ -15,7 +15,7 @@ All of this runs on a GitHub-hosted runner, in the app repository, by calling wo
 | Step | When | What it does to GCP |
 |---|---|---|
 | Lint and tests | Every pull request | Nothing |
-| `terraform plan` | Every pull request | Reads state and the live project. Writes a comment. Changes nothing. |
+| `terraform plan` | Every pull request | Reads state and the live project. Writes a short summary comment. Changes nothing. |
 | `docker build` and push | Merge to `staging` or `production` | Pushes an image tagged with that commit's SHA to Artifact Registry in the target project |
 | `terraform plan` again, then `terraform apply` | Same merge, after the push | Creates, updates, or deletes resources so the project matches `infra/` |
 
@@ -25,7 +25,7 @@ On a laptop, `make ci` runs that same `docker build` before the first push to st
 
 The build context is the component directory, and the Dockerfile there is `Dockerfile`. A component whose image must read other files in the repo sets `docker_context` and `dockerfile` in `service.yaml`. Both paths stay inside the repo, and the Dockerfile stays inside the context. The laptop build and the shared workflow use that pair.
 
-The plan on the pull request is the one a person reads. The merge creates a new commit, so the apply job plans again for that commit and applies that plan. The image tag in the applied plan is the commit that landed on the branch.
+The plan on the pull request is the one a person reads. The comment lists each resource to add, change, replace, or destroy, and the attributes that differ. A destroy or a replace is at the top. The comment links to the Actions run, where the job summary has the full plan without the refresh log. `odlc sync-infra` copies `scripts/summarize_plan.py` into the app so the workflow can write that summary. Until that file is in the app, the comment is the text of `terraform show` for the saved plan. The merge creates a new commit, so the apply job plans again for that commit and applies that plan. The image tag in the applied plan is the commit that landed on the branch.
 
 ## What Terraform owns
 

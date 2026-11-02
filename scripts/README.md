@@ -27,5 +27,6 @@ Two kinds of files live here. The guide runs the first kind from a checkout of t
 | [render_tfvars.py](render_tfvars.py) | Plan and deploy workflows, to write `ci.auto.tfvars.json` |
 | [yaml_subset.py](yaml_subset.py) | Imported by `render_tfvars.py` and the other Python tools |
 | [check_secret_versions.py](check_secret_versions.py) | `deploy-cloud-run` and `deploy-job`, after the secret shells exist |
+| [summarize_plan.py](summarize_plan.py) | `terraform-plan`, to write the pull request comment from the JSON plan |
 
-An app generated before `check_secret_versions.py` was added needs one `sync-infra`, then a commit of that file, before the next deploy. The workflow fails if the file is missing.
+An app generated before `check_secret_versions.py` was added needs one `sync-infra`, then a commit of that file, before the next deploy. The workflow fails if the file is missing. An app that does not yet have `summarize_plan.py` still gets a plan comment: the workflow posts `terraform show` until `sync-infra` copies this file.

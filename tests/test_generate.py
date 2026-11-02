@@ -224,6 +224,9 @@ unmet:
         assert copied_check.read_text() == (ROOT / "scripts" / "check_secret_versions.py").read_text()
         assert (dest / "scripts" / "render_tfvars.py").is_file()
         assert (dest / "scripts" / "yaml_subset.py").is_file()
+        copied_summary = dest / "scripts" / "summarize_plan.py"
+        assert copied_summary.is_file()
+        assert copied_summary.read_text() == (ROOT / "scripts" / "summarize_plan.py").read_text()
         assert (dest / "Makefile").is_file()
         assert "ci:" in (dest / "Makefile").read_text()
         assert (dest / ".githooks" / "pre-commit").is_file()
