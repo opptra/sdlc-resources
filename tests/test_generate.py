@@ -858,6 +858,54 @@ components:
         assert "terraform init -backend=false" in makefile
 
 
+def test_scheduled_job_mounts_secret_map_ids() -> None:
+    manifest_yaml = """name: inventory-optimizer
+prefix: inventory-optimizer
+purpose: Jobs read the secret ids named in secret_map.
+prod_project: opptra-applications
+region: asia-south1
+components:
+  - name: jobs
+    archetype: scheduled-jobs
+    auth: none
+    parts: [job]
+    secrets: [DATABASE_URL, ANTHROPIC_API_KEY]
+    secret_map:
+      DATABASE_URL: inventory-optimizer-database-url
+      ANTHROPIC_API_KEY: FLOW_AGENT_KEY
+    jobs:
+      - name: tick
+        command: python -m app.approvals tick
+        secrets: [DATABASE_URL]
+      - name: agentic
+        command: python -m app.agentic work
+        secrets: [DATABASE_URL, ANTHROPIC_API_KEY]
+"""
+    with tempfile.TemporaryDirectory() as tmp:
+        manifest = Path(tmp) / "service.yaml"
+        manifest.write_text(manifest_yaml)
+        dest = Path(tmp) / "app"
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "generate.py"), str(manifest), str(dest)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        infra = dest / "components" / "jobs" / "infra"
+        main_tf = (infra / "main.tf").read_text()
+        module_tf = (infra / "modules" / "cloud-run-job" / "main.tf").read_text()
+        assert 'secrets         = ["DATABASE_URL"]' in main_tf
+        assert 'secrets         = ["DATABASE_URL", "ANTHROPIC_API_KEY"]' in main_tf
+        assert 'DATABASE_URL = "inventory-optimizer-database-url"' in main_tf
+        assert 'ANTHROPIC_API_KEY = "FLOW_AGENT_KEY"' in main_tf
+        assert 'module.secrets.by_id["inventory-optimizer-database-url"]' in main_tf
+        assert 'module.secrets.by_id["FLOW_AGENT_KEY"]' in main_tf
+        assert "inventory-optimizer-DATABASE_URL" not in main_tf
+        assert "inventory-optimizer-ANTHROPIC_API_KEY" not in main_tf
+        assert "lookup(var.secret_map, env.value," in module_tf
+
+
 def test_docker_context_must_be_a_pair_inside_the_repo() -> None:
     base = """name: image-root
 purpose: Build one job image from the repository root.
