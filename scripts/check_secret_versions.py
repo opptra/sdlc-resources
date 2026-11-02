@@ -17,6 +17,8 @@ from collections.abc import Callable
 from pathlib import Path
 
 MOUNTED_SECRET = re.compile(r'module\.secrets\.by_id\["([^"]+)"\]')
+MOUNTED_BLOCK = re.compile(r"mounted_secret_ids\s*=\s*\[(.*?)\n\s*\]", re.DOTALL)
+DIRECT_SECRET = re.compile(r'^\s*"([^"]+)"\s*,?\s*$', re.M)
 
 VersionLister = Callable[[str, str], bool]
 
@@ -24,10 +26,24 @@ VersionLister = Callable[[str, str], bool]
 def mounted_secret_ids(main_tf: str) -> list[str]:
     """Return the secret ids a workload mounts, in first-seen order.
 
-    Only ``module.secrets.by_id`` references count. A shell that nothing
-    mounts does not need a version for this apply.
+    Includes both ``module.secrets.by_id["..."]`` references (app-owned shells)
+    and direct string IDs in ``mounted_secret_ids`` (pre-existing shared secrets).
     """
     seen: list[str] = []
+    for block_m in MOUNTED_BLOCK.finditer(main_tf):
+        block = block_m.group(1)
+        for line in block.splitlines():
+            m_mod = MOUNTED_SECRET.search(line)
+            if m_mod:
+                sid = m_mod.group(1)
+                if sid not in seen:
+                    seen.append(sid)
+                continue
+            m_dir = DIRECT_SECRET.match(line)
+            if m_dir:
+                sid = m_dir.group(1)
+                if sid not in seen:
+                    seen.append(sid)
     for match in MOUNTED_SECRET.finditer(main_tf):
         secret_id = match.group(1)
         if secret_id not in seen:

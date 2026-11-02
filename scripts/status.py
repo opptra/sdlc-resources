@@ -72,8 +72,9 @@ def _check_resource_prefixes(manifest_data: dict, normalized_data: dict, repo_di
             if not rname.startswith(valid_prefixes):
                 unprefixed.append(f"receiver:{recv['name']}")
         secret_map = comp.get("secret_map") if isinstance(comp.get("secret_map"), dict) else {}
+        existing_secs = {str(s) for s in comp.get("existing_secrets", [])}
         for s in comp.get("secrets", []):
-            if str(s) in secret_map:
+            if str(s) in secret_map or str(s) in existing_secs:
                 continue
             sname = str(s).replace("_", "-")
             if not sname.startswith(valid_prefixes):
@@ -158,6 +159,9 @@ def inspect_repo(repo_dir: Path) -> dict:
     ]
     tf_files = [
         p for p in repo_dir.glob("**/infra/main.tf") if ".terraform" not in p.parts
+    ]
+    custom_tf_files = [
+        p for p in repo_dir.glob("**/infra/*.keep.tf") if ".terraform" not in p.parts
     ]
     bq_sql_files = [
         p
@@ -476,7 +480,7 @@ def inspect_repo(repo_dir: Path) -> dict:
             else "Missing / Invalid",
             "action": "None"
             if (has_manifest and not manifest_errors)
-            else "Create or fix service.yaml and run `sdlc.py check`",
+            else "Create or fix service.yaml and run `odlc check`",
         },
         {
             "id": 5,
@@ -489,7 +493,7 @@ def inspect_repo(repo_dir: Path) -> dict:
             else f"Partial ({pillars_passed}/{total_pillars})",
             "action": "None"
             if (pillars_passed == total_pillars and not rule_errors)
-            else "Run `sdlc.py sync-infra` to update managed rules block (Table B)",
+            else "Run `odlc sync-infra` to update managed rules block (Table B)",
         },
         {
             "id": 6,
@@ -509,7 +513,7 @@ def inspect_repo(repo_dir: Path) -> dict:
             else "Needs fix / Missing",
             "action": "None"
             if (ci_file.is_file() and not ci_path_errors)
-            else "Set component `path` / `frontend_path` and run `sdlc.py sync-infra`",
+            else "Set component `path` / `frontend_path` and run `odlc sync-infra`",
         },
         {
             "id": 7,
@@ -521,13 +525,15 @@ def inspect_repo(repo_dir: Path) -> dict:
             else "Partial",
             "action": "None"
             if (not py_files or (py_tests and pyprojects))
-            else "Run `sdlc.py add-tests` or add pyproject.toml / test scripts",
+            else "Run `odlc add-tests` or add pyproject.toml / test scripts",
         },
         {
             "id": 8,
             "area": "Deployment & Infrastructure",
             "current": (
-                f"Terraform infra/ present ({len(tf_files)} modules)"
+                f"Terraform infra/ present ({len(tf_files)} modules"
+                + (f", {len(custom_tf_files)} custom.keep.tf" if custom_tf_files else "")
+                + ")"
                 + (f"; legacy scripts: {', '.join(legacy_deploy)}" if legacy_deploy else "")
                 if tf_files
                 else (
@@ -536,7 +542,7 @@ def inspect_repo(repo_dir: Path) -> dict:
                     else "No deploy files"
                 )
             ),
-            "target": "Terraform in infra/ + GitHub Actions WIF on staging & production",
+            "target": "Terraform in infra/ (plus custom.keep.tf for extensions) + GitHub Actions WIF",
             "status": "Up to the mark"
             if (tf_files and not legacy_deploy)
             else ("Transitional" if legacy_deploy else "Missing"),
@@ -648,7 +654,7 @@ def inspect_repo(repo_dir: Path) -> dict:
                 and (repo_dir / "Makefile").is_file()
                 and (repo_dir / ".devcontainer" / "devcontainer.json").is_file()
             )
-            else "Run `sdlc.py sync-infra` to generate `.env.example`, `Makefile`, and `.devcontainer`",
+            else "Run `odlc sync-infra` to generate `.env.example`, `Makefile`, and `.devcontainer`",
         },
         {
             "id": 16,
@@ -658,7 +664,7 @@ def inspect_repo(repo_dir: Path) -> dict:
             "status": "Up to the mark" if prefix_ok else "Needs prefixing",
             "action": "None"
             if prefix_ok
-            else f"Prefix {', '.join(unprefixed_items[:5])} with `{manifest_data.get('prefix') or manifest_data.get('name', '<prefix>')}-` in service.yaml and run `sdlc.py sync-infra`",
+            else f"Prefix {', '.join(unprefixed_items[:5])} with `{manifest_data.get('prefix') or manifest_data.get('name', '<prefix>')}-` in service.yaml and run `odlc sync-infra`",
         },
         {
             "id": 17,
@@ -682,7 +688,7 @@ def inspect_repo(repo_dir: Path) -> dict:
                 (repo_dir / ".githooks/pre-commit").is_file()
                 and (repo_dir / ".githooks/pre-push").is_file()
             )
-            else "Run `sdlc.py sync-infra` and execute `.githooks/pre-commit` + `make ci`",
+            else "Run `odlc sync-infra` and execute `.githooks/pre-commit` + `make ci`",
         },
     ]
 
@@ -801,7 +807,7 @@ def main(argv: list[str] | None = None) -> int:
         print(render_tables(report))
     else:
         status = "ok" if report["aligned"] else "needs-alignment"
-        print(f"sdlc status: {status}")
+        print(f"odlc status: {status}")
         for err in (
             report["manifest_errors"]
             + report["rule_errors"]

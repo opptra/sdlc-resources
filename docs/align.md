@@ -6,7 +6,7 @@ nav_order: 6
 
 # Align an existing repository
 
-`align-app` in `opptra/agent-skills` runs `scripts/sdlc.py status` against the open repository and offers three paths. The developer says yes once. The 17-point scorecard still prints. It is the receipt, not a checklist of 17 decisions.
+`align-app` in `opptra/agent-skills` runs `odlc status` against the open repository and offers three paths. The developer says yes once. The 17-point scorecard still prints. It is the receipt, not a checklist of 17 decisions.
 
 | Path | What happens |
 |---|---|
@@ -32,10 +32,10 @@ Do not delete the current deploy path during **Adopt now**.
 
 ## 2. Fill capability gaps (phased scripts + skill)
 
-When `sdlc.py status --json` detects code using a capability that is missing its standard wiring or tests:
-- Run `sdlc.py add-data` to add missing DB/Firestore/storage/secret helpers.
-- Run `sdlc.py add-tests` to add missing entrypoint/health tests and local fixtures.
-- Run `sdlc.py sync-infra` when the developer approves generating `infra/` and workflows.
+When `odlc status --json` detects code using a capability that is missing its standard wiring or tests:
+- Run `odlc add-data` to add missing DB/Firestore/storage/secret helpers.
+- Run `odlc add-tests` to add missing entrypoint/health tests and local fixtures.
+- Run `odlc sync-infra` when the developer approves generating `infra/` and workflows.
 
 ## 3. Later recommendations
 

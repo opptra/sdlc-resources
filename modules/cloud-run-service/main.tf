@@ -88,6 +88,14 @@ resource "google_cloud_run_v2_service" "app" {
       }
 
       dynamic "env" {
+        for_each = var.gcs_bucket_name == null ? [] : [var.gcs_bucket_name]
+        content {
+          name  = "GCS_BUCKET_NAME"
+          value = env.value
+        }
+      }
+
+      dynamic "env" {
         for_each = var.plain_env
         content {
           name  = env.key
@@ -95,14 +103,14 @@ resource "google_cloud_run_v2_service" "app" {
         }
       }
 
-      # Same mount as a job: the variable name, filled from <prefix>-<ENV_NAME>.
+      # Same mount as a job: the variable name, filled from <prefix>-<ENV_NAME> or var.secret_map.
       dynamic "env" {
         for_each = var.secrets
         content {
           name = env.value
           value_source {
             secret_key_ref {
-              secret  = startswith(env.value, "${var.secret_prefix}-") ? env.value : "${var.secret_prefix}-${env.value}"
+              secret  = lookup(var.secret_map, env.value, startswith(env.value, "${var.secret_prefix}-") ? env.value : "${var.secret_prefix}-${env.value}")
               version = "latest"
             }
           }

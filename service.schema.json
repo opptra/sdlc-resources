@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Opptra service manifest",
-  "description": "Facts only. scripts/sdlc.py and scripts/generate.py decide CI, rules, and deploy from these facts.",
+  "description": "Facts only. odlc (scripts/odlc.py) and scripts/generate.py decide CI, rules, and deploy from these facts.",
   "type": "object",
   "additionalProperties": false,
   "required": ["name", "purpose", "prod_project", "region"],
@@ -183,14 +183,58 @@
           "database": {
             "type": "string",
             "enum": ["postgres", "firestore", "bigquery", "none"],
-            "description": "postgres adds Cloud SQL. firestore adds default Firestore IAM. bigquery adds BigQuery rules/client. Omit or use none when the component does not store data."
+            "description": "postgres adds Cloud SQL (or connects to pre-existing Postgres when postgres_instance or postgres_external is set). firestore adds default Firestore IAM. bigquery adds BigQuery IAM/rules/client. Omit or use none when the component does not store data."
+          },
+          "postgres_instance": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Optional pre-existing Cloud SQL connection name (<project>:<region>:<instance>). Connects and grants cloudsql.client IAM without creating a new instance."
+          },
+          "postgres_secret": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Optional pre-existing Secret Manager secret ID holding the password or DATABASE_URL for postgres_instance."
+          },
+          "postgres_external": {
+            "type": "boolean",
+            "description": "When true with database: postgres, skips Cloud SQL creation in Terraform and connects via DATABASE_URL secret/env."
           },
           "bigquery": {
             "type": "boolean"
           },
+          "bigquery_project": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Optional pre-existing GCP project ID hosting BigQuery datasets (defaults to prod_project)."
+          },
+          "bigquery_datasets": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_.:-]{1,150}$"
+            },
+            "description": "Optional list of pre-existing BigQuery dataset IDs (dataset or project.dataset) granted roles/bigquery.dataEditor."
+          },
+          "extra_roles": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^roles/[A-Za-z0-9._-]+$"
+            },
+            "description": "Optional extra GCP project IAM roles granted to this component's runtime service account (e.g. roles/aiplatform.user)."
+          },
+          "custom_terraform": {
+            "type": "boolean",
+            "description": "When true, scaffolds and preserves infra/custom.keep.tf for custom GCP resources."
+          },
           "bucket": {
             "type": "string",
             "enum": ["private", "none"]
+          },
+          "existing_bucket": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$",
+            "description": "Optional pre-existing GCS bucket name. Grants roles/storage.objectAdmin without creating a new bucket."
           },
           "queue": {
             "type": "string"
@@ -201,6 +245,14 @@
               "type": "string",
               "pattern": "^[A-Za-z][A-Za-z0-9_-]{1,80}$"
             }
+          },
+          "existing_secrets": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]{1,80}$"
+            },
+            "description": "Environment variable names backed by pre-existing/shared Secret Manager secrets (mounts and grants secretAccessor IAM without creating secret shells in module.secrets)."
           },
           "secret_map": {
             "type": "object",

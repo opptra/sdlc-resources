@@ -28,6 +28,10 @@ _SECRET_NAME_RE = re.compile(r"([A-Za-z0-9_]+)=([a-zA-Z0-9_-]+):")
 _VAR_ASSIGN_RE = re.compile(r"^([A-Z_][A-Z0-9_]*)=[\"']?([^\"'\n#]+)[\"']?", re.M)
 _DOCKER_CMD_RE = re.compile(r"^\s*(?:CMD|ENTRYPOINT)\s+(.*)$", re.M)
 _SENSITIVE_ENV_RE = re.compile(r"(?:SECRET|TOKEN|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|CREDENTIAL|AUTH_KEY|DSN)$", re.I)
+_IAM_ROLE_RE = re.compile(r"--role[=\s]+[\"']?(roles/[A-Za-z0-9._-]+)[\"']?")
+_CLOUDSQL_FLAG_RE = re.compile(r"--(?:add|set)-cloudsql-instances[=\s]+[\"']?([a-zA-Z0-9_:.-]+)[\"']?")
+_PUBSUB_TOPIC_RE = re.compile(r"gcloud\s+pubsub\s+topics\s+create\s+[\"']?([a-zA-Z0-9_-]+)[\"']?")
+_REDIS_INSTANCE_RE = re.compile(r"gcloud\s+redis\s+instances\s+create\s+[\"']?([a-zA-Z0-9_-]+)[\"']?")
 
 
 def _clean_var_val(val: str) -> str:
@@ -67,6 +71,10 @@ def discover_repo(repo_dir: Path) -> dict:
     secrets_found: list[str] = []
     secret_map_found: dict[str, str] = {}
     plain_env_found: dict[str, str] = {}
+    extra_roles_found: list[str] = []
+    custom_resources_found: list[dict] = []
+    cloudsql_instances_found: list[str] = []
+    has_database_url_ref = False
     dockerfile_commands: dict[str, str] = {}
     regions_found: list[str] = []
     prod_project = "opptra-applications"
@@ -95,6 +103,10 @@ def discover_repo(repo_dir: Path) -> dict:
             k, _, v = stripped.partition("=")
             k = k.strip()
             v = v.strip().strip("\"'")
+            if k == "DATABASE_URL" and any(
+                host in v for host in ("neon.tech", "supabase", "amazonaws.com", "sslmode=")
+            ):
+                has_database_url_ref = True
             if not k or k in {
                 "APP_ENV",
                 "SERVICE_NAME",
@@ -138,6 +150,38 @@ def discover_repo(repo_dir: Path) -> dict:
                 secrets_found.append(sec_id)
             if env_var and sec_id:
                 secret_map_found[env_var] = sec_id
+            if env_var == "DATABASE_URL":
+                has_database_url_ref = True
+
+        for csql_m in _CLOUDSQL_FLAG_RE.finditer(resolved):
+            inst = csql_m.group(1).strip()
+            if inst and not inst.startswith("$") and inst not in cloudsql_instances_found:
+                cloudsql_instances_found.append(inst)
+
+        for role_m in _IAM_ROLE_RE.finditer(resolved):
+            role = role_m.group(1).strip()
+            if role not in {
+                "roles/run.invoker",
+                "roles/secretmanager.secretAccessor",
+                "roles/cloudsql.client",
+                "roles/datastore.user",
+                "roles/bigquery.jobUser",
+            } and role not in extra_roles_found:
+                extra_roles_found.append(role)
+
+        for ps_m in _PUBSUB_TOPIC_RE.finditer(resolved):
+            tname = ps_m.group(1).strip()
+            if not tname.startswith("$") and not any(
+                c["type"] == "pubsub_topic" and c["name"] == tname for c in custom_resources_found
+            ):
+                custom_resources_found.append({"type": "pubsub_topic", "name": tname, "source": rel})
+
+        for rd_m in _REDIS_INSTANCE_RE.finditer(resolved):
+            rname = rd_m.group(1).strip()
+            if not rname.startswith("$") and not any(
+                c["type"] == "redis_instance" and c["name"] == rname for c in custom_resources_found
+            ):
+                custom_resources_found.append({"type": "redis_instance", "name": rname, "source": rel})
 
         for loop_m in re.finditer(r"for\s+job\s+in\s+([^;\n]+);", raw):
             for tok in loop_m.group(1).split():
@@ -296,7 +340,7 @@ def discover_repo(repo_dir: Path) -> dict:
         mod_map = {
             "postgres": "modules/cloud-sql",
             "firestore": "modules/firestore",
-            "bigquery": "bigquery rule (external dataset)",
+            "bigquery": "modules/bigquery",
             "bucket": "modules/bucket",
             "queue": "modules/queue",
         }
@@ -308,6 +352,17 @@ def discover_repo(repo_dir: Path) -> dict:
                 "module": mod_map.get(st, st),
                 "action": "Import or bind IAM",
                 "means": f"Wires {st} IAM and local .env.example configuration.",
+            }
+        )
+    for cr in custom_resources_found:
+        resources_table.append(
+            {
+                "resource": cr["name"],
+                "kind": f"Custom Resource ({cr['type']})",
+                "source": cr["source"],
+                "module": "infra/custom.keep.tf",
+                "action": "Generate in infra/custom.keep.tf + Import",
+                "means": "Managed in preserved infra/custom.keep.tf alongside main.tf.",
             }
         )
 
@@ -329,6 +384,14 @@ def discover_repo(repo_dir: Path) -> dict:
         "secrets": secrets_found,
         "secret_map": secret_map_found,
         "plain_env": plain_env_found,
+        "extra_roles": extra_roles_found,
+        "custom_resources": custom_resources_found,
+        "cloudsql_instances": cloudsql_instances_found,
+        "postgres_external": bool(
+            "postgres" in stores
+            and not cloudsql_instances_found
+            and (has_database_url_ref or bool(services or jobs))
+        ),
         "stores": stores,
         "resources_table": resources_table,
     }
@@ -366,6 +429,10 @@ def propose_manifest(report: dict) -> str:
     secret_map = report.get("secret_map", {})
     secrets = list(secret_map.keys()) if secret_map else list(report.get("secrets", []))
     plain_env = report.get("plain_env", {})
+    extra_roles = report.get("extra_roles", [])
+    has_custom_tf = bool(report.get("custom_resources"))
+    cloudsql_instances = report.get("cloudsql_instances", [])
+    postgres_external = bool(report.get("postgres_external", False))
 
     components: list[dict] = []
     for svc in report.get("services", []):
@@ -389,6 +456,15 @@ def propose_manifest(report: dict) -> str:
             comp["secret_map"] = secret_map
         if plain_env:
             comp["env"] = plain_env
+        if extra_roles:
+            comp["extra_roles"] = extra_roles
+        if has_custom_tf:
+            comp["custom_terraform"] = True
+        if db == "postgres":
+            if cloudsql_instances:
+                comp["postgres_instance"] = cloudsql_instances[0]
+            elif postgres_external:
+                comp["postgres_external"] = True
         components.append(comp)
 
     if report.get("jobs"):
@@ -425,6 +501,15 @@ def propose_manifest(report: dict) -> str:
             comp["secret_map"] = secret_map
         if plain_env:
             comp["env"] = plain_env
+        if extra_roles:
+            comp["extra_roles"] = extra_roles
+        if has_custom_tf:
+            comp["custom_terraform"] = True
+        if db == "postgres":
+            if cloudsql_instances:
+                comp["postgres_instance"] = cloudsql_instances[0]
+            elif postgres_external:
+                comp["postgres_external"] = True
         components.append(comp)
 
     if not components:
@@ -445,6 +530,15 @@ def propose_manifest(report: dict) -> str:
             comp["secret_map"] = secret_map
         if plain_env:
             comp["env"] = plain_env
+        if extra_roles:
+            comp["extra_roles"] = extra_roles
+        if has_custom_tf:
+            comp["custom_terraform"] = True
+        if db == "postgres":
+            if cloudsql_instances:
+                comp["postgres_instance"] = cloudsql_instances[0]
+            elif postgres_external:
+                comp["postgres_external"] = True
         components.append(comp)
 
     manifest = {
@@ -467,7 +561,7 @@ def render_discovery_markdown(report: dict) -> str:
     ]
     if not report["resources_table"]:
         lines.append(
-            "| *(none detected in scripts)* | Configure in `service.yaml` | Repo root | `modules/cloud-run-*` | **Create** | `sdlc.py sync-infra` will create fresh Terraform in `infra/`. |"
+            "| *(none detected in scripts)* | Configure in `service.yaml` | Repo root | `modules/cloud-run-*` | **Create** | `odlc sync-infra` will create fresh Terraform in `infra/`. |"
         )
     else:
         for row in report["resources_table"]:
@@ -552,6 +646,35 @@ def write_imports_for_manifest(manifest_path: Path, dest: Path, project_id: str 
         imports_file = infra_dir / "imports.tf.example"
         imports_file.write_text("\n".join(blocks) + "\n")
         written.append(imports_file)
+
+    disc = discover_repo(dest)
+    if disc.get("custom_resources") and by_infra_dir:
+        first_infra = next(iter(by_infra_dir.keys()))
+        custom_tf = first_infra / "custom.keep.tf"
+        custom_blocks = [
+            "# Custom GCP resources discovered by `odlc discover-infra`.",
+            "# Preserved across `odlc sync-infra` runs.",
+        ]
+        for cr in disc["custom_resources"]:
+            slug = re.sub(r"[^a-zA-Z0-9_]", "_", cr["name"])
+            if cr["type"] == "pubsub_topic":
+                custom_blocks.append(
+                    f'\nresource "google_pubsub_topic" "{slug}" {{\n'
+                    f"  project = var.project_id\n"
+                    f'  name    = "{cr["name"]}"\n'
+                    f"}}"
+                )
+            elif cr["type"] == "redis_instance":
+                custom_blocks.append(
+                    f'\nresource "google_redis_instance" "{slug}" {{\n'
+                    f"  project        = var.project_id\n"
+                    f"  region         = var.region\n"
+                    f'  name           = "{cr["name"]}"\n'
+                    f"  memory_size_gb = 1\n"
+                    f"}}"
+                )
+        custom_tf.write_text("\n".join(custom_blocks) + "\n")
+        written.append(custom_tf)
     return written
 
 

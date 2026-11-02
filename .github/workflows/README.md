@@ -9,7 +9,7 @@ An app does not copy these files. [scripts/generate.py](../../scripts/generate.p
 | [python-ci.yml](python-ci.yml) | Pull request, for a Python component | Lint and tests |
 | [frontend-ci.yml](frontend-ci.yml) | Pull request, for a UI | Frontend install and tests |
 | [config-ci.yml](config-ci.yml) | Pull request, for a config-only repo | Checks that `service.yaml` and `README.md` exist |
-| [sdlc-check.yml](sdlc-check.yml) | Pull request | Checks the manifest, the rule stamp, and `sdlc.py status` when the app has that CLI |
+| [sdlc-check.yml](sdlc-check.yml) | Pull request | Checks the manifest, the rule stamp, and `odlc status` when the app has that CLI |
 | [terraform-plan.yml](terraform-plan.yml) | Pull request | Plans staging, or production when the pull request targets `production`. Comments the plan. Changes nothing. |
 | [deploy-cloud-run.yml](deploy-cloud-run.yml) | Push to `staging`, or merge into `production`, for an API | Creates secret shells, stops when a mounted secret has no version, builds the image, applies Terraform |
 | [deploy-job.yml](deploy-job.yml) | Same branches, for a job | Same secret check, then build and apply. A new image does not start a run. |

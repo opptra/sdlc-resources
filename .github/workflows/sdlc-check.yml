@@ -16,6 +16,8 @@ jobs:
           test -f AGENTS.md
           test -f CLAUDE.md
           grep -q "sdlc-rules-version:" AGENTS.md
-          if [ -f scripts/sdlc.py ]; then
+          if [ -f scripts/odlc.py ]; then
+            python3 scripts/odlc.py status --check
+          elif [ -f scripts/sdlc.py ]; then
             python3 scripts/sdlc.py status --check
           fi

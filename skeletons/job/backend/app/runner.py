@@ -59,21 +59,21 @@ def run_job(
     jobs = load_jobs_config(config_path)
     spec = jobs.get(name, {"enabled": True})
     if not spec.get("enabled", True):
-        logger.info("job_skipped_disabled name=%s", name)
+        logger.info("job_skipped_disabled name=%s", name, extra={"job": name})
         return 0, "disabled"
 
     if acquire_lock is not None and not acquire_lock(name):
-        logger.info("job_skipped_locked name=%s", name)
+        logger.info("job_skipped_locked name=%s", name, extra={"job": name})
         return 0, "locked"
 
     run_id = uuid.uuid4().hex[:12]
-    logger.info("run_start name=%s run_id=%s", name, run_id)
+    logger.info("run_start name=%s run_id=%s", name, run_id, extra={"job": name, "run_id": run_id})
     try:
         result = handler() if handler is not None else "ok"
-        logger.info("run_ok name=%s run_id=%s", name, run_id)
+        logger.info("run_ok name=%s run_id=%s", name, run_id, extra={"job": name, "run_id": run_id})
         return 0, result
     except Exception:
-        logger.exception("run_failed name=%s run_id=%s", name, run_id)
+        logger.exception("run_failed name=%s run_id=%s", name, run_id, extra={"job": name, "run_id": run_id})
         return 1, "failed"
     finally:
         if release_lock is not None:

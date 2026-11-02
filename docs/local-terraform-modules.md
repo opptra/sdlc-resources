@@ -84,6 +84,6 @@ The runner checks out the app. These files have to be in that checkout:
 
 `init-runtime` and `sync-infra` copy all three from this repository. `sync-infra` also rewrites workflows, rules, and hooks. Use it when the app is missing `check_secret_versions.py`. Use the Python above when the only change is the module copy.
 
-Do not run a full `scripts/sdlc.py sync-infra` only to refresh modules. That command also rewrites workflows, rules, and hooks.
+Do not run a full `odlc sync-infra` only to refresh modules. That command also rewrites workflows, rules, and hooks.
 
 `terraform init` still downloads the HashiCorp `google` provider. That download is the public provider registry, not this repository, and it does not need a GitHub login.

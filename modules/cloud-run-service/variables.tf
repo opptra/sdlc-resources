@@ -74,6 +74,18 @@ variable "secrets" {
   description = "Environment variable names to mount from Secret Manager."
 }
 
+variable "secret_map" {
+  type        = map(string)
+  default     = {}
+  description = "Optional map of environment variable name to pre-existing Secret Manager secret ID."
+}
+
+variable "gcs_bucket_name" {
+  type        = string
+  default     = null
+  description = "Plain GCS_BUCKET_NAME when a private or existing bucket is configured."
+}
+
 variable "plain_env" {
   type        = map(string)
   default     = {}

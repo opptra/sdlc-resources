@@ -104,7 +104,7 @@ def test_generate_selects_capabilities() -> None:
         assert not (dest / ".cursor" / "rules" / "worker.mdc").exists()
 
         status_res = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "status", str(dest), "--check"],
+            [sys.executable, str(ROOT / "scripts" / "odlc.py"), "status", str(dest), "--check"],
             check=False,
             capture_output=True,
             text=True,
@@ -160,7 +160,7 @@ unmet:
         dest = Path(tmp) / "cx"
 
         for phase in ("check", "init-runtime", "add-data", "add-tests", "sync-infra"):
-            cmd = [sys.executable, str(ROOT / "scripts" / "sdlc.py"), phase, str(manifest_path)]
+            cmd = [sys.executable, str(ROOT / "scripts" / "odlc.py"), phase, str(manifest_path)]
             if phase != "check":
                 cmd.append(str(dest))
             subprocess.run(cmd, check=True)
@@ -234,7 +234,7 @@ unmet:
         assert "make setup" in readme
 
         res = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "status", str(dest), "--json", "--check"],
+            [sys.executable, str(ROOT / "scripts" / "odlc.py"), "status", str(dest), "--json", "--check"],
             check=True,
             capture_output=True,
             text=True,
@@ -246,7 +246,7 @@ unmet:
         assert "firestore" in report["detected"]["capabilities_in_deps"]
 
         table_res = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "doctor", str(dest)],
+            [sys.executable, str(ROOT / "scripts" / "odlc.py"), "doctor", str(dest)],
             check=True,
             capture_output=True,
             text=True,
@@ -318,7 +318,7 @@ components:
         subprocess.run(
             [
                 sys.executable,
-                str(ROOT / "scripts" / "sdlc.py"),
+                str(ROOT / "scripts" / "odlc.py"),
                 "sync-infra",
                 str(manifest_path),
                 str(repo),
@@ -342,7 +342,7 @@ components:
 
         # status --check passes with zero ci_path_errors
         res = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "status", str(repo), "--check"],
+            [sys.executable, str(ROOT / "scripts" / "odlc.py"), "status", str(repo), "--check"],
             check=False,
             capture_output=True,
             text=True,
@@ -356,7 +356,7 @@ components:
             "--no-allow-unauthenticated --set-secrets=TOKEN=dashboard-token:latest\n"
         )
         disc_res = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "discover-infra", str(repo), "--table"],
+            [sys.executable, str(ROOT / "scripts" / "odlc.py"), "discover-infra", str(repo), "--table"],
             check=True,
             capture_output=True,
             text=True,
@@ -367,7 +367,7 @@ components:
         imp_res = subprocess.run(
             [
                 sys.executable,
-                str(ROOT / "scripts" / "sdlc.py"),
+                str(ROOT / "scripts" / "odlc.py"),
                 "discover-infra",
                 str(repo),
                 "--write-imports",
@@ -414,7 +414,7 @@ def test_non_destructive_init_runtime_and_infra_preserves_imports_and_plans() ->
         subprocess.run(
             [
                 sys.executable,
-                str(ROOT / "scripts" / "sdlc.py"),
+                str(ROOT / "scripts" / "odlc.py"),
                 "init-runtime",
                 str(FIXTURE),
                 str(dest),
@@ -432,7 +432,7 @@ def test_non_destructive_init_runtime_and_infra_preserves_imports_and_plans() ->
         subprocess.run(
             [
                 sys.executable,
-                str(ROOT / "scripts" / "sdlc.py"),
+                str(ROOT / "scripts" / "odlc.py"),
                 "sync-infra",
                 str(FIXTURE),
                 str(dest),
@@ -472,7 +472,7 @@ def test_brownfield_secret_map_legacy_service_and_propose_manifest() -> None:
         prop_res = subprocess.run(
             [
                 sys.executable,
-                str(ROOT / "scripts" / "sdlc.py"),
+                str(ROOT / "scripts" / "odlc.py"),
                 "discover-infra",
                 str(repo),
                 "--propose-manifest",
@@ -485,7 +485,7 @@ def test_brownfield_secret_map_legacy_service_and_propose_manifest() -> None:
         manifest_path.write_text(prop_res.stdout)
 
         check_res = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "check", str(manifest_path)],
+            [sys.executable, str(ROOT / "scripts" / "odlc.py"), "check", str(manifest_path)],
             check=False,
             capture_output=True,
             text=True,
@@ -495,7 +495,7 @@ def test_brownfield_secret_map_legacy_service_and_propose_manifest() -> None:
         subprocess.run(
             [
                 sys.executable,
-                str(ROOT / "scripts" / "sdlc.py"),
+                str(ROOT / "scripts" / "odlc.py"),
                 "sync-infra",
                 str(manifest_path),
                 str(repo),
@@ -505,7 +505,7 @@ def test_brownfield_secret_map_legacy_service_and_propose_manifest() -> None:
         subprocess.run(
             [
                 sys.executable,
-                str(ROOT / "scripts" / "sdlc.py"),
+                str(ROOT / "scripts" / "odlc.py"),
                 "discover-infra",
                 str(repo),
                 "--write-imports",
@@ -522,7 +522,7 @@ def test_brownfield_secret_map_legacy_service_and_propose_manifest() -> None:
         assert "projects/opptra-analytics-prod/locations/asia-southeast1/services/analytics-portal" in imports_tf
 
         status_res = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "status", str(repo), "--json", "--check"],
+            [sys.executable, str(ROOT / "scripts" / "odlc.py"), "status", str(repo), "--json", "--check"],
             check=True,
             capture_output=True,
             text=True,
@@ -547,3 +547,258 @@ def test_yaml_subset_multiline_and_floats() -> None:
     assert doc["name"] == "demo"
     assert doc["threshold"] == 0.85
     assert doc["purpose"] == "Line one of purpose.\nLine two of purpose.\n"
+
+
+def test_runtime_sdk_secret_underscores_secret_map_logging_extra_and_redaction(monkeypatch) -> None:
+    common_dir = ROOT / "skeletons" / "_common" / "backend"
+    sys.path.insert(0, str(common_dir))
+    from app.config import resolve_secret_name
+    from app.logging import (
+        JsonFormatter,
+        register_secret_for_redaction,
+        set_trace_id,
+    )
+    import logging
+
+    monkeypatch.setenv("RESOURCE_PREFIX", "cx")
+    # Underscores are preserved to match Terraform secret_resource_id
+    assert (
+        resolve_secret_name("FRESHDESK_CUSTOMERCARE_API_KEY")
+        == "cx-FRESHDESK_CUSTOMERCARE_API_KEY"
+    )
+    # Brownfield secret_map override is respected
+    monkeypatch.setenv("SECRET_MAP_DASHBOARD_TOKEN", "legacy-dashboard-token")
+    assert resolve_secret_name("DASHBOARD_TOKEN") == "legacy-dashboard-token"
+
+    # Structured JSON logging preserves extra fields, trace_id, and redacts secrets/tokens
+    set_trace_id("trace-xyz-123")
+    register_secret_for_redaction("super-sensitive-secret-value")
+    formatter = JsonFormatter()
+    record = logging.LogRecord(
+        name="job",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=10,
+        msg="Failed calling upstream with Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9 and key=super-sensitive-secret-value",
+        args=(),
+        exc_info=None,
+    )
+    record.job = "report-daily"
+    record.run_id = "run987654"
+    rendered = json.loads(formatter.format(record))
+    assert rendered["job"] == "report-daily"
+    assert rendered["run_id"] == "run987654"
+    assert rendered["trace_id"] == "trace-xyz-123"
+    assert "timestamp" in rendered
+    assert "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9" not in rendered["message"]
+    assert "super-sensitive-secret-value" not in rendered["message"]
+    assert "[REDACTED]" in rendered["message"]
+
+
+def test_bigquery_module_extra_roles_custom_keep_tf_and_sdlc_next() -> None:
+    manifest_yaml = """name: ads-intelligence
+prefix: ads
+purpose: BigQuery and Vertex AI intelligence service.
+prod_project: opptra-applications
+region: asia-south1
+components:
+  - name: api
+    archetype: cloud-run-service
+    path: .
+    auth: iap
+    database: bigquery
+    bigquery_datasets: [ads_raw, ads_mart]
+    extra_roles: [roles/aiplatform.user]
+    custom_terraform: true
+    parts: [api]
+    secrets: [GEMINI_API_KEY]
+"""
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp) / "ads-intelligence"
+        repo.mkdir(parents=True)
+        (repo / "deploy.sh").write_text(
+            "gcloud pubsub topics create ads-events\n"
+            "gcloud projects add-iam-policy-binding opptra-applications --role=roles/aiplatform.user\n"
+        )
+        manifest_path = repo / "service.yaml"
+        manifest_path.write_text(manifest_yaml)
+
+        subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "odlc.py"), "all", str(manifest_path), str(repo)],
+            check=True,
+        )
+
+        main_tf = (repo / "infra" / "main.tf").read_text()
+        assert 'module "bigquery"' in main_tf
+        assert '"ads_raw"' in main_tf
+        assert '"ads_mart"' in main_tf
+        assert 'resource "google_project_iam_member" "extra_roles"' in main_tf
+        assert '"roles/aiplatform.user"' in main_tf
+        assert (repo / "infra" / "modules" / "bigquery" / "main.tf").is_file()
+        assert (repo / "infra" / "custom.keep.tf").is_file()
+
+        # Check fixture postgres migrate job in test_generate_selects_capabilities style
+        pg_dest = Path(tmp) / "pg-app"
+        subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "generate.py"), str(FIXTURE), str(pg_dest)],
+            check=True,
+        )
+        pg_main_tf = (pg_dest / "components" / "console" / "infra" / "main.tf").read_text()
+        assert 'resource "google_cloud_run_v2_job" "migrate"' in pg_main_tf
+        assert '"${var.name}-migrate"' in pg_main_tf
+
+        # Test discover-infra writes discovered pubsub topic into custom.keep.tf
+        subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "odlc.py"),
+                "discover-infra",
+                str(repo),
+                "--write-imports",
+                str(manifest_path),
+            ],
+            check=True,
+        )
+        assert 'resource "google_pubsub_topic" "ads_events"' in (
+            repo / "infra" / "custom.keep.tf"
+        ).read_text()
+
+        # Test odlc next and odlc secrets
+        next_res = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "odlc.py"), "next", str(repo), "--json"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        next_data = json.loads(next_res.stdout)
+        assert next_data["aligned"] is True
+
+        sec_res = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "odlc.py"), "secrets", str(repo), "--json"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        sec_data = json.loads(sec_res.stdout)
+        assert sec_data["secrets"][0]["secret_id"] == "ads-GEMINI_API_KEY"
+
+
+def test_connect_preexisting_postgres_bigquery_bucket_and_shared_secrets() -> None:
+    manifest_yaml = """name: finance-reconciler
+prefix: fin
+purpose: Reconcile invoices against pre-existing Cloud SQL, cross-project BigQuery, shared bucket, and shared secrets.
+prod_project: opptra-applications
+region: asia-south1
+components:
+  - name: api
+    archetype: cloud-run-service
+    path: .
+    auth: iap
+    database: postgres
+    postgres_instance: opptra-applications:asia-south1:shared-erp-db
+    postgres_secret: shared-erp-db-password
+    bigquery: true
+    bigquery_project: opptra-data-warehouse
+    bigquery_datasets: [billing_mart, opptra-raw.invoices_raw]
+    bucket: private
+    existing_bucket: opptra-shared-invoices
+    parts: [api]
+    secrets: [APP_SIGNING_KEY]
+    existing_secrets: [SHARED_SLACK_TOKEN]
+    secret_map:
+      SHARED_SLACK_TOKEN: corp-slack-bot-token
+"""
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp) / "finance-reconciler"
+        repo.mkdir(parents=True)
+        manifest_path = repo / "service.yaml"
+        manifest_path.write_text(manifest_yaml)
+
+        subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "odlc.py"), "all", str(manifest_path), str(repo)],
+            check=True,
+        )
+
+        main_tf = (repo / "infra" / "main.tf").read_text()
+        # 1. Pre-existing Postgres: does NOT create module "db", mounts existing Cloud SQL socket & secret
+        assert 'module "db"' not in main_tf
+        assert 'cloud_sql_instance = "opptra-applications:asia-south1:shared-erp-db"' in main_tf
+        assert 'db_secret_id       = "shared-erp-db-password"' in main_tf
+        assert 'secret_id = "shared-erp-db-password"' in main_tf
+
+        # 2. Pre-existing BigQuery: passes dataset_project and datasets, sets BIGQUERY_PROJECT & BIGQUERY_DATASET
+        assert 'module "bigquery"' in main_tf
+        assert 'dataset_project         = "opptra-data-warehouse"' in main_tf
+        assert '"billing_mart"' in main_tf
+        assert '"opptra-raw.invoices_raw"' in main_tf
+        assert 'BIGQUERY_PROJECT = "opptra-data-warehouse"' in main_tf
+        assert 'BIGQUERY_DATASET = "billing_mart"' in main_tf
+
+        # 3. Pre-existing Bucket: does NOT create module "bucket", grants IAM on existing bucket
+        assert 'module "bucket"' not in main_tf
+        assert 'resource "google_storage_bucket_iam_member" "existing_bucket"' in main_tf
+        assert 'bucket = "opptra-shared-invoices"' in main_tf
+        assert 'gcs_bucket_name = "opptra-shared-invoices"' in main_tf
+
+        # 4. Pre-existing Secrets: module "secrets" only creates shell for APP_SIGNING_KEY, not SHARED_SLACK_TOKEN
+        secrets_block = main_tf.split('module "secrets"')[1]
+        assert '"fin-APP_SIGNING_KEY"' in secrets_block
+        assert "corp-slack-bot-token" not in secrets_block
+        # But module "service" mounts both (app-owned via module.secrets.by_id and existing as direct string)
+        assert 'module.secrets.by_id["fin-APP_SIGNING_KEY"]' in main_tf
+        assert '"corp-slack-bot-token",' in main_tf
+
+        # Verify check_secret_versions.py detects both app-owned and pre-existing mounted secret IDs
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from check_secret_versions import mounted_secret_ids
+
+        mounted = mounted_secret_ids(main_tf)
+        assert "fin-APP_SIGNING_KEY" in mounted
+        assert "corp-slack-bot-token" in mounted
+
+        # Verify .env.example has pre-existing BigQuery & Bucket defaults
+        env_example = (repo / ".env.example").read_text()
+        assert "BIGQUERY_PROJECT=opptra-data-warehouse" in env_example
+        assert "BIGQUERY_DATASET=billing_mart" in env_example
+        assert "GCS_BUCKET_NAME=opptra-shared-invoices" in env_example
+
+        # Verify 17-point scorecard passes 100%
+        status_res = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "odlc.py"), "status", str(repo), "--check"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert status_res.returncode == 0, status_res.stderr
+
+        # Verify discover-infra --propose-manifest sets postgres_external vs postgres_instance
+        ext_pg_repo = Path(tmp) / "ext-pg-app"
+        ext_pg_repo.mkdir(parents=True)
+        (ext_pg_repo / "requirements.txt").write_text("sqlalchemy>=2.0\npsycopg[binary]>=3.2\n")
+        (ext_pg_repo / "deploy.sh").write_text(
+            "gcloud run deploy ext-pg-app --region asia-south1 --set-secrets=DATABASE_URL=neon-db-url:latest\n"
+        )
+        prop_ext = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "odlc.py"), "discover-infra", str(ext_pg_repo), "--propose-manifest"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert "postgres_external: true" in prop_ext
+        assert "postgres_instance:" not in prop_ext
+
+        csql_repo = Path(tmp) / "csql-pg-app"
+        csql_repo.mkdir(parents=True)
+        (csql_repo / "requirements.txt").write_text("sqlalchemy>=2.0\n")
+        (csql_repo / "deploy.sh").write_text(
+            "gcloud run deploy csql-pg-app --region asia-south1 "
+            "--add-cloudsql-instances=opptra-applications:asia-south1:existing-pg\n"
+        )
+        prop_csql = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "odlc.py"), "discover-infra", str(csql_repo), "--propose-manifest"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert "postgres_instance: \"opptra-applications:asia-south1:existing-pg\"" in prop_csql
+        assert "postgres_external:" not in prop_csql

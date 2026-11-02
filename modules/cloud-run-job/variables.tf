@@ -40,6 +40,12 @@ variable "secret_prefix" {
   description = "App prefix from service.yaml. A secret id is <prefix>-<ENV_NAME>. The job name is not included."
 }
 
+variable "secret_map" {
+  type        = map(string)
+  default     = {}
+  description = "Optional map of environment variable name to pre-existing Secret Manager secret ID."
+}
+
 variable "gcs_bucket_name" {
   type        = string
   default     = null
