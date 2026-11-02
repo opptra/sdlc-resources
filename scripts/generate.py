@@ -951,8 +951,18 @@ provider "google" {
     del app
 
 
-def workflow_call(job_id: str, workflow: str, repo: str, ref: str, arguments: dict[str, str]) -> str:
-    lines = [f"  {job_id}:", f"    uses: {repo}/.github/workflows/{workflow}@{ref}"]
+def workflow_call(
+    job_id: str,
+    workflow: str,
+    repo: str,
+    ref: str,
+    arguments: dict[str, str],
+    condition: str | None = None,
+) -> str:
+    lines = [f"  {job_id}:"]
+    if condition:
+        lines.append(f"    if: {condition}")
+    lines.append(f"    uses: {repo}/.github/workflows/{workflow}@{ref}")
     if arguments:
         lines.append("    with:")
         for key, value in arguments.items():
@@ -1097,6 +1107,7 @@ def write_deploy(path: Path, branch: str, jobs: list, repo: str, ref: str) -> No
         "on:",
         "  push:",
         f"    branches: [{branch}]",
+        "  workflow_dispatch:",
         "permissions:",
         "  contents: read",
         "  id-token: write",
@@ -1117,7 +1128,16 @@ def write_deploy(path: Path, branch: str, jobs: list, repo: str, ref: str) -> No
             call_args["dockerfile"] = args["dockerfile"]
         call_args["wif_provider"] = f"${{{{ vars.WIF_PROVIDER_{suffix} }}}}"
         call_args["wif_service_account"] = f"${{{{ vars.WIF_SERVICE_ACCOUNT_{suffix} }}}}"
-        body.append(workflow_call(job_id, workflow, repo, ref, call_args))
+        body.append(
+            workflow_call(
+                job_id,
+                workflow,
+                repo,
+                ref,
+                call_args,
+                condition=f"github.ref == 'refs/heads/{branch}'",
+            )
+        )
     path.write_text("\n".join(body) + "\n")
 
 
@@ -1251,6 +1271,8 @@ def write_readme(app: dict, components: list[dict], dest: Path) -> None:
             "```",
             "",
             "Open a pull request from `main` into `production` and merge it. That is the only way `main` deploys, and it deploys production.",
+            "",
+            "To deploy the current `staging` or `production` commit again without a new push, start `deploy-staging` or `deploy-production` from the Actions page and choose that branch. The jobs run only on the matching branch and load the current shared workflows.",
             README_END,
             "",
         ]

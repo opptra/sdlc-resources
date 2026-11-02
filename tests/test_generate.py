@@ -65,11 +65,15 @@ def test_generate_selects_capabilities() -> None:
         assert "@fission-ai/openspec@1.15.0" in devcontainer["postCreateCommand"]
         deploy_staging = (dest / ".github" / "workflows" / "deploy-staging.yml").read_text()
         assert "branches: [staging]" in deploy_staging
+        assert "workflow_dispatch:" in deploy_staging
+        assert "github.ref == 'refs/heads/staging'" in deploy_staging
         assert "deploy-cloud-run.yml" in deploy_staging
         assert "deploy-job.yml" in deploy_staging
         assert "docker_context:" not in deploy_staging
         production = (dest / ".github" / "workflows" / "deploy-production.yml").read_text()
         assert "branches: [production]" in production
+        assert "workflow_dispatch:" in production
+        assert "github.ref == 'refs/heads/production'" in production
         assert "opptra/sdlc-resources/.github/workflows/deploy-job.yml@main" in production
         assert (dest / "components" / "console" / "backend" / "tests" / "test_health.py").is_file()
         assert (dest / "components" / "console" / "backend" / "app" / "db.py").is_file()
