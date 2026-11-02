@@ -101,6 +101,7 @@ jobs:
         env:
           PROJECT: ${{ steps.manifest.outputs.project_id }}
           NAME: ${{ steps.manifest.outputs.name }}
+          REGION: ${{ steps.manifest.outputs.region }}
           AUTH: ${{ steps.manifest.outputs.auth }}
         working-directory: ${{ inputs.working_directory }}/infra
         run: |
@@ -110,10 +111,23 @@ jobs:
             -backend-config="prefix=${NAME}"
           terraform plan -input=false -lock-timeout=120s -var-file=ci.auto.tfvars.json -out=tfplan
           terraform apply -input=false -lock-timeout=120s tfplan
+          if grep -q 'module "db"' main.tf && gcloud run jobs describe "${NAME}-migrate" --region "$REGION" --project "$PROJECT" >/dev/null 2>&1; then
+            gcloud run jobs execute "${NAME}-migrate" --region "$REGION" --project "$PROJECT" --wait
+          fi
           if terraform output -raw uri >/tmp/uri 2>/dev/null; then
             URL="$(cat /tmp/uri)"
             if [ "$AUTH" = "public" ] || [ "$AUTH" = "app-login" ]; then
               curl --fail --silent --show-error "${URL}/api/health"
+            elif [ "$AUTH" = "iap" ]; then
+              READY="$(gcloud run services describe "$NAME" --region "$REGION" --project "$PROJECT" --format='value(status.conditions[0].status)' 2>/dev/null || echo '')"
+              if [ "$READY" = "False" ]; then
+                echo "Cloud Run service ${NAME} failed readiness check." >&2
+                exit 1
+              fi
+              TOKEN="$(gcloud auth print-identity-token 2>/dev/null || echo '')"
+              if [ -n "$TOKEN" ]; then
+                curl --fail --silent --show-error -H "Authorization: Bearer ${TOKEN}" "${URL}/api/health" || true
+              fi
             fi
             echo "url=${URL}" >> "$GITHUB_OUTPUT"
           fi

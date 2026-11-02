@@ -547,3 +547,137 @@ def test_yaml_subset_multiline_and_floats() -> None:
     assert doc["name"] == "demo"
     assert doc["threshold"] == 0.85
     assert doc["purpose"] == "Line one of purpose.\nLine two of purpose.\n"
+
+
+def test_runtime_sdk_secret_underscores_secret_map_logging_extra_and_redaction(monkeypatch) -> None:
+    common_dir = ROOT / "skeletons" / "_common" / "backend"
+    sys.path.insert(0, str(common_dir))
+    from app.config import resolve_secret_name
+    from app.logging import (
+        JsonFormatter,
+        register_secret_for_redaction,
+        set_trace_id,
+    )
+    import logging
+
+    monkeypatch.setenv("RESOURCE_PREFIX", "cx")
+    # Underscores are preserved to match Terraform secret_resource_id
+    assert (
+        resolve_secret_name("FRESHDESK_CUSTOMERCARE_API_KEY")
+        == "cx-FRESHDESK_CUSTOMERCARE_API_KEY"
+    )
+    # Brownfield secret_map override is respected
+    monkeypatch.setenv("SECRET_MAP_DASHBOARD_TOKEN", "legacy-dashboard-token")
+    assert resolve_secret_name("DASHBOARD_TOKEN") == "legacy-dashboard-token"
+
+    # Structured JSON logging preserves extra fields, trace_id, and redacts secrets/tokens
+    set_trace_id("trace-xyz-123")
+    register_secret_for_redaction("super-sensitive-secret-value")
+    formatter = JsonFormatter()
+    record = logging.LogRecord(
+        name="job",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=10,
+        msg="Failed calling upstream with Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9 and key=super-sensitive-secret-value",
+        args=(),
+        exc_info=None,
+    )
+    record.job = "report-daily"
+    record.run_id = "run987654"
+    rendered = json.loads(formatter.format(record))
+    assert rendered["job"] == "report-daily"
+    assert rendered["run_id"] == "run987654"
+    assert rendered["trace_id"] == "trace-xyz-123"
+    assert "timestamp" in rendered
+    assert "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9" not in rendered["message"]
+    assert "super-sensitive-secret-value" not in rendered["message"]
+    assert "[REDACTED]" in rendered["message"]
+
+
+def test_bigquery_module_extra_roles_custom_keep_tf_and_sdlc_next() -> None:
+    manifest_yaml = """name: ads-intelligence
+prefix: ads
+purpose: BigQuery and Vertex AI intelligence service.
+prod_project: opptra-applications
+region: asia-south1
+components:
+  - name: api
+    archetype: cloud-run-service
+    path: .
+    auth: iap
+    database: bigquery
+    bigquery_datasets: [ads_raw, ads_mart]
+    extra_roles: [roles/aiplatform.user]
+    custom_terraform: true
+    parts: [api]
+    secrets: [GEMINI_API_KEY]
+"""
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp) / "ads-intelligence"
+        repo.mkdir(parents=True)
+        (repo / "deploy.sh").write_text(
+            "gcloud pubsub topics create ads-events\n"
+            "gcloud projects add-iam-policy-binding opptra-applications --role=roles/aiplatform.user\n"
+        )
+        manifest_path = repo / "service.yaml"
+        manifest_path.write_text(manifest_yaml)
+
+        subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "all", str(manifest_path), str(repo)],
+            check=True,
+        )
+
+        main_tf = (repo / "infra" / "main.tf").read_text()
+        assert 'module "bigquery"' in main_tf
+        assert '"ads_raw"' in main_tf
+        assert '"ads_mart"' in main_tf
+        assert 'resource "google_project_iam_member" "extra_roles"' in main_tf
+        assert '"roles/aiplatform.user"' in main_tf
+        assert (repo / "infra" / "modules" / "bigquery" / "main.tf").is_file()
+        assert (repo / "infra" / "custom.keep.tf").is_file()
+
+        # Check fixture postgres migrate job in test_generate_selects_capabilities style
+        pg_dest = Path(tmp) / "pg-app"
+        subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "generate.py"), str(FIXTURE), str(pg_dest)],
+            check=True,
+        )
+        pg_main_tf = (pg_dest / "components" / "console" / "infra" / "main.tf").read_text()
+        assert 'resource "google_cloud_run_v2_job" "migrate"' in pg_main_tf
+        assert '"${var.name}-migrate"' in pg_main_tf
+
+        # Test discover-infra writes discovered pubsub topic into custom.keep.tf
+        subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "sdlc.py"),
+                "discover-infra",
+                str(repo),
+                "--write-imports",
+                str(manifest_path),
+            ],
+            check=True,
+        )
+        assert 'resource "google_pubsub_topic" "ads_events"' in (
+            repo / "infra" / "custom.keep.tf"
+        ).read_text()
+
+        # Test sdlc.py next and sdlc.py secrets
+        next_res = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "next", str(repo), "--json"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        next_data = json.loads(next_res.stdout)
+        assert next_data["aligned"] is True
+
+        sec_res = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "sdlc.py"), "secrets", str(repo), "--json"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        sec_data = json.loads(sec_res.stdout)
+        assert sec_data["secrets"][0]["secret_id"] == "ads-GEMINI_API_KEY"

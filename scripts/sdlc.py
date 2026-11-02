@@ -4,6 +4,8 @@
 Subcommands:
   check <service.yaml>                        Validate service.yaml against schema and rules
   status [repo_dir] [--json|--table|--check]  Inspect repo & render 17-point scorecard
+  next [repo_dir] [--json]                    Show current SDLC state, pending items, and next command
+  secrets [repo_dir] [--env staging|prod]     List resolved Secret Manager IDs for service.yaml
   doctor [repo_dir]                           Alias for `status --table`
   init-runtime <service.yaml> [dest]          Phase 2: Scaffold runtime, openspec/, and entrypoints
   add-data <service.yaml> [dest]              Phase 3: Install data/storage/queue/secret packages & helpers
@@ -15,6 +17,7 @@ Subcommands:
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 import time
@@ -118,6 +121,121 @@ def record_phase_state(dest: Path, phase: str, manifest_path: Path) -> None:
     state_file.write_text(dump(state))
 
 
+def run_next(rest: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="sdlc.py next")
+    parser.add_argument("repo", nargs="?", type=Path, default=Path("."))
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(rest)
+    repo_dir = args.repo.resolve()
+
+    report = status_mod.inspect_repo(repo_dir)
+    branch = "uninitialized"
+    if (repo_dir / ".git").exists():
+        res = subprocess.run(
+            ["git", "-C", str(repo_dir), "rev-parse", "--abbrev-ref", "HEAD"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            branch = res.stdout.strip()
+
+    intent_file = repo_dir / ".sdlc" / "intent.yaml"
+    intent = parse(intent_file.read_text()) if intent_file.is_file() else {}
+    state_file = repo_dir / ".sdlc" / "state.yaml"
+    state = parse(state_file.read_text()) if state_file.is_file() else {}
+
+    passing_sections = sum(1 for s in report["sections_14"] if s["status"] == "Up to the mark")
+    total_sections = len(report["sections_14"])
+    pending: list[str] = []
+    if not report["has_service_yaml"]:
+        pending.append("missing service.yaml")
+    elif report["manifest_errors"]:
+        pending.append(f"manifest errors ({len(report['manifest_errors'])})")
+    if report["rule_errors"]:
+        pending.append(f"rule sync needed ({len(report['rule_errors'])})")
+    if report["detected"]["legacy_deploy"]:
+        pending.append(f"legacy deploy scripts ({', '.join(report['detected']['legacy_deploy'])})")
+    if report["unmet"]:
+        pending.append(f"{len(report['unmet'])} unmet extension item(s)")
+    if intent.get("next_step"):
+        pending.append(f"active {intent.get('route', 'task')} at step '{intent['next_step']}'")
+
+    if not report["has_service_yaml"]:
+        next_cmd = "opptra discover --propose-manifest > service.yaml && opptra sync"
+    elif report["manifest_errors"]:
+        next_cmd = "opptra check service.yaml"
+    elif not report["aligned"]:
+        next_cmd = "opptra sync"
+    elif intent.get("next_step") in {"test", "code", "code-stacked-on-infra", "ci"}:
+        next_cmd = f"Continue {intent.get('route', 'feature')} on {intent.get('branch', branch)} and run `make ci`"
+    elif branch not in {"main", "staging", "production", "uninitialized"}:
+        next_cmd = f"make ci && git push --force-with-lease origin {branch}:staging"
+    else:
+        next_cmd = "Start a feature (`feat/<ticket>-<slug>`) or bug fix (`fix/<ticket>-<slug>`)"
+
+    payload = {
+        "aligned": report["aligned"],
+        "score": f"{passing_sections}/{total_sections}",
+        "branch": branch,
+        "openspec": report["openspec"],
+        "intent": intent,
+        "state": state,
+        "pending": pending,
+        "recommended_next_step": next_cmd,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        status_label = f"Aligned ({passing_sections}/{total_sections})" if report["aligned"] else f"Needs Alignment ({passing_sections}/{total_sections})"
+        os_label = "ready" if report["openspec"]["dir_present"] else "missing"
+        print(f"Current State: {status_label} | Branch: {branch} | OpenSpec: {os_label}")
+        print(f"Pending Items: {', '.join(pending) if pending else 'None'}")
+        print(f"Recommended Next Step: {next_cmd}")
+    return 0
+
+
+def run_secrets(rest: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="sdlc.py secrets")
+    parser.add_argument("repo", nargs="?", type=Path, default=Path("."))
+    parser.add_argument("--env", choices=("staging", "prod"), default="staging")
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(rest)
+    repo_dir = args.repo.resolve()
+    manifest_path = repo_dir / "service.yaml"
+    if not manifest_path.is_file():
+        print("missing service.yaml", file=sys.stderr)
+        return 1
+    app = check_manifest.normalize(parse(manifest_path.read_text()))
+    project = "opptra-staging" if args.env == "staging" else str(app["prod_project"])
+    prefix = str(app.get("prefix") or app["name"])
+    resolved_secrets: list[dict] = []
+    seen: set[str] = set()
+    for comp in app.get("components", []):
+        smap = comp.get("secret_map") if isinstance(comp.get("secret_map"), dict) else None
+        for sec in comp.get("secrets", []):
+            gcp_id = check_manifest.secret_resource_id(prefix, str(sec), smap)
+            if gcp_id not in seen:
+                seen.add(gcp_id)
+                resolved_secrets.append(
+                    {
+                        "env_var": str(sec),
+                        "secret_id": gcp_id,
+                        "project": project,
+                    }
+                )
+    if args.json:
+        print(json.dumps({"project": project, "secrets": resolved_secrets}, indent=2))
+    else:
+        if not resolved_secrets:
+            print(f"No secrets declared in {manifest_path.name}.")
+        else:
+            print(f"Target GCP project ({args.env}): {project}")
+            for item in resolved_secrets:
+                print(f"  {item['env_var']} -> {item['secret_id']}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args_list = argv if argv is not None else sys.argv[1:]
     if not args_list:
@@ -131,6 +249,10 @@ def main(argv: list[str] | None = None) -> int:
         return check_manifest.main(["check_manifest.py", *rest])
     if cmd == "status":
         return status_mod.main(rest)
+    if cmd == "next":
+        return run_next(rest)
+    if cmd == "secrets":
+        return run_secrets(rest)
     if cmd == "doctor":
         return status_mod.main([*rest, "--table"])
     if cmd == "discover-infra":

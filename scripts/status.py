@@ -159,6 +159,9 @@ def inspect_repo(repo_dir: Path) -> dict:
     tf_files = [
         p for p in repo_dir.glob("**/infra/main.tf") if ".terraform" not in p.parts
     ]
+    custom_tf_files = [
+        p for p in repo_dir.glob("**/infra/*.keep.tf") if ".terraform" not in p.parts
+    ]
     bq_sql_files = [
         p
         for p in list(repo_dir.glob("scripts/**/*.sql"))
@@ -527,7 +530,9 @@ def inspect_repo(repo_dir: Path) -> dict:
             "id": 8,
             "area": "Deployment & Infrastructure",
             "current": (
-                f"Terraform infra/ present ({len(tf_files)} modules)"
+                f"Terraform infra/ present ({len(tf_files)} modules"
+                + (f", {len(custom_tf_files)} custom.keep.tf" if custom_tf_files else "")
+                + ")"
                 + (f"; legacy scripts: {', '.join(legacy_deploy)}" if legacy_deploy else "")
                 if tf_files
                 else (
@@ -536,7 +541,7 @@ def inspect_repo(repo_dir: Path) -> dict:
                     else "No deploy files"
                 )
             ),
-            "target": "Terraform in infra/ + GitHub Actions WIF on staging & production",
+            "target": "Terraform in infra/ (plus custom.keep.tf for extensions) + GitHub Actions WIF",
             "status": "Up to the mark"
             if (tf_files and not legacy_deploy)
             else ("Transitional" if legacy_deploy else "Missing"),

@@ -99,6 +99,9 @@ ALLOWED_COMPONENT_KEYS = {
     "parts",
     "database",
     "bigquery",
+    "bigquery_datasets",
+    "extra_roles",
+    "custom_terraform",
     "bucket",
     "queue",
     "secrets",
@@ -506,6 +509,17 @@ def check(data: dict) -> list[str]:
         legacy_svc = component.get("legacy_service_name")
         if legacy_svc is not None and NAME.fullmatch(str(legacy_svc)) is None:
             errors.append(f"{cname}: legacy_service_name {legacy_svc!r} must be a lowercase slug")
+        extra_roles = component.get("extra_roles")
+        if extra_roles is not None:
+            if not isinstance(extra_roles, list):
+                errors.append(f"{cname}: extra_roles must be a list of GCP IAM roles (roles/...)")
+            else:
+                for role in extra_roles:
+                    if not str(role).startswith("roles/"):
+                        errors.append(f"{cname}: extra_role {role!r} must start with 'roles/'")
+        bq_datasets = component.get("bigquery_datasets")
+        if bq_datasets is not None and not isinstance(bq_datasets, list):
+            errors.append(f"{cname}: bigquery_datasets must be a list of dataset IDs")
         env = component.get("env")
         if env is not None and not isinstance(env, dict):
             errors.append(f"{cname}: env must be a mapping of variable name to value")

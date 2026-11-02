@@ -183,10 +183,30 @@
           "database": {
             "type": "string",
             "enum": ["postgres", "firestore", "bigquery", "none"],
-            "description": "postgres adds Cloud SQL. firestore adds default Firestore IAM. bigquery adds BigQuery rules/client. Omit or use none when the component does not store data."
+            "description": "postgres adds Cloud SQL. firestore adds default Firestore IAM. bigquery adds BigQuery IAM/rules/client. Omit or use none when the component does not store data."
           },
           "bigquery": {
             "type": "boolean"
+          },
+          "bigquery_datasets": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_]{1,100}$"
+            },
+            "description": "Optional list of BigQuery dataset IDs granted roles/bigquery.dataEditor."
+          },
+          "extra_roles": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^roles/[A-Za-z0-9._-]+$"
+            },
+            "description": "Optional extra GCP project IAM roles granted to this component's runtime service account (e.g. roles/aiplatform.user)."
+          },
+          "custom_terraform": {
+            "type": "boolean",
+            "description": "When true, scaffolds and preserves infra/custom.keep.tf for custom GCP resources."
           },
           "bucket": {
             "type": "string",
