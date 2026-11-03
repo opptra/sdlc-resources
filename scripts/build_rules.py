@@ -22,7 +22,7 @@ END_MARKER = "<!-- sdlc-rules-end -->"
 
 GLOBS = {
     "python": "{**/backend/**/*.py,src/**/*.py,scripts/**/*.py,tests/**/*.py}",
-    "react": "{components/**/frontend/**/*.{ts,tsx},**/frontend/**/*.{ts,tsx},apps/**/*.{ts,tsx}}",
+    "react": "{components/**/frontend/**/*.{ts,tsx,css},**/frontend/**/*.{ts,tsx,css},apps/**/*.{ts,tsx,css}}",
     "terraform": "**/infra/**",
     "job": "{**/backend/**/*.py,src/**/*.py,scripts/**/*.py}",
     "worker": "{**/backend/**/*.py,src/**/*.py}",

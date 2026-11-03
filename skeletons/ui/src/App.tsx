@@ -16,7 +16,7 @@ export function App() {
   }, []);
 
   return (
-    <main>
+    <main className="app">
       <h1>Example app</h1>
       <p>API health: {health}</p>
     </main>

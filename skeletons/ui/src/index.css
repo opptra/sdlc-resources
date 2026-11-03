@@ -1,4 +1,32 @@
+@import url("https://fonts.googleapis.com/css2?family=Spectral:wght@300;600;700&family=Raleway:wght@400;500;600&display=swap");
+@import "./tokens.css";
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
 body {
-  font-family: system-ui, sans-serif;
-  margin: 2rem;
+  margin: 0;
+  background: var(--color-canvas);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: var(--font-size-body);
+  line-height: var(--line-body);
+}
+
+.app {
+  max-width: var(--reading-max);
+  margin: 0 auto;
+  padding: var(--space-6);
+}
+
+h1 {
+  margin: 0 0 var(--space-4);
+  color: var(--color-ink);
+  font-family: var(--font-heading);
+  font-size: var(--font-size-heading);
+  font-weight: var(--weight-semibold);
+  line-height: var(--line-heading);
 }
