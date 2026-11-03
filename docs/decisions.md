@@ -73,3 +73,7 @@ The account that mounts a secret receives `roles/secretmanager.secretAccessor` o
 ## Agent rules
 
 `rules/` in this repository is the source. `odlc sync-infra` compiles `AGENTS.md`, `CLAUDE.md`, and `.cursor/rules/*.mdc` from the capabilities active in `service.yaml`.
+
+## Product UI
+
+Product UI follows the published Opptra design system at https://opptra.github.io/opptra-design-system/. This repository does not fork the guidelines. The `ui` part compiles that instruction into `react.mdc`. New apps vendor `frontend/src/tokens.css` from that release. Presentations, documents, emails, and charts use the `opptra-branding` skill in `opptra/agent-skills`, not this rule.

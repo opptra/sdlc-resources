@@ -102,7 +102,10 @@ def test_generate_selects_capabilities() -> None:
         assert "Do not log secret values" in agents
         assert "Do not ask the user to name a skill or to run a script." in agents
         assert (dest / ".cursor" / "rules" / "react.mdc").is_file()
-        assert "frontend/**/*.{ts,tsx}" in (dest / ".cursor" / "rules" / "react.mdc").read_text()
+        react_rule = (dest / ".cursor" / "rules" / "react.mdc").read_text()
+        assert "frontend/**/*.{ts,tsx,css}" in react_rule
+        assert "opptra.github.io/opptra-design-system" in react_rule
+        assert (dest / "components" / "console" / "frontend" / "src" / "tokens.css").is_file()
         assert (dest / ".cursor" / "rules" / "database.mdc").is_file()
         assert "cloud-sql" in (dest / "components" / "console" / "infra" / "main.tf").read_text()
         assert "postgres:16" in (dest / "README.md").read_text()

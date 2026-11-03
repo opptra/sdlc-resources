@@ -12,6 +12,9 @@ If the sentence does not name a skill, use `opptra`. It only picks the route:
 
 | Ask | Skill |
 |---|---|
+| Mockup, wireframe, prototype, or product screen | `opptra-design-system` |
+| Presentation, document, email, or chart | `opptra-branding` |
+| Internal dashboard or one-page tool (not a new GitHub app) | `opptra-dashboard` |
 | New repository | `create-app` |
 | Existing repository onto this standard | `align-app` |
 | `deploy.sh`, Cloud Build, Vercel, or manual GCP onto Terraform | `adopt-terraform` |

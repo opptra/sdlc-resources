@@ -4,4 +4,4 @@
 
 `always.md` is included for every app. The other files are included when [mapping.yaml](../mapping.yaml) attaches them to a part or a capability. `odlc sync-infra` rewrites the compiled copies. Edit the source here, then sync the app.
 
-The decisions those rules implement are in [docs/decisions.md](../docs/decisions.md).
+The decisions those rules implement are in [docs/decisions.md](../docs/decisions.md). The `react` rule points product UI at the published Opptra design system; it does not copy the guidelines into this repository.
