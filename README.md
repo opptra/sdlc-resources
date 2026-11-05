@@ -18,6 +18,7 @@ A pull request from `main` into `production` deploys `prod_project` from `servic
 |---|---|
 | [docs/workflows.md](docs/workflows.md) | Which skill to use. GitHub Pages publishes `docs/` from `main` with a left page index and a right heading index. |
 | `opptra/agent-skills` (`opptra`, `create-app`, `change-app`, `align-app`, `feature`, `bug`) | The agent skills that drive the SDLC |
+| [skills/give-feedback](skills/give-feedback/SKILL.md) | Skill source that files feedback as an issue in this repository. Copy it to `opptra/agent-skills` `opptra/skills/give-feedback/` to install it. |
 | [odlc](scripts/odlc.py) | Phase CLI (`check`, `status`, `init-runtime`, `add-data`, `add-tests`, `sync-infra`). `discover` and `sync` are aliases for `discover-infra` and `sync-infra`. |
 | [docs/new-app.md](docs/new-app.md) | Creating a new app |
 | [docs/align.md](docs/align.md) | Aligning an existing repository |

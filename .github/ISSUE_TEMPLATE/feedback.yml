@@ -1,0 +1,34 @@
+name: SDLC feedback
+description: Feedback on the Opptra SDLC skills, generator, workflows, modules, rules, or docs
+labels: [feedback]
+body:
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options: [bug, improvement, question]
+    validations:
+      required: true
+  - type: input
+    id: area
+    attributes:
+      label: Area
+      description: A skill, script, module, workflow, or doc page
+      placeholder: feature skill
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened / what I want
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Skills commit, generator_sha, repo, Linear ticket. Do not paste secrets.
