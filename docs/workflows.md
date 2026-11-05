@@ -22,6 +22,7 @@ If the sentence does not name a skill, use `opptra`. It only picks the route:
 | New product behavior | `feature` |
 | Broken or incorrect behavior | `bug` |
 | Am I set up | `doctor` |
+| Feedback or a problem with the SDLC itself | `give-feedback`. Files an issue in `opptra/sdlc-resources`. |
 
 A capability change and a product change are two pull requests. `change-app` goes first, in the same chat. The agent opens the `infra/<ticket>-<slug>` pull request and can immediately cut `feat/<ticket>-<slug>` stacked on top of that infra branch (`next_step: code-stacked-on-infra`) so product code and local tests continue without waiting for the infra merge (or pause at `wait-for-infra` if the developer prefers). A feature is `express` when it is one file (test and pull request, no OpenSpec), `standard` when it needs an OpenSpec, or `migration` when a local plan already decided the shape. After the plan is approved, `feature` and `bug` write `.sdlc/intent.yaml` so a new chat continues. That directory is gitignored.
 
