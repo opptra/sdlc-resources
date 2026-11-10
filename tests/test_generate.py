@@ -95,7 +95,7 @@ def test_generate_selects_capabilities() -> None:
         assert "does not protect branches" in production
         assert not (dest / "scripts" / "bind-repo.sh").exists()
         agents = (dest / "AGENTS.md").read_text()
-        assert "sdlc-rules-version: 2" in agents
+        assert "sdlc-rules-version: 3" in agents
         assert "feat: <ticket-id>" in agents
         assert "infra: <ticket-id>" in agents
         assert ".sdlc/state.yaml" not in agents
