@@ -1036,6 +1036,7 @@ def write_workflows(mapping: dict, components: list[dict], dest: Path, include_d
         ref,
         """on:
   pull_request:
+  workflow_call:
 """,
     )
     if plan_jobs:
@@ -1753,7 +1754,7 @@ def write_repo_hygiene(dest: Path) -> None:
             "## Linear\n\n## What changed\n\n## OpenSpec\n\n"
             "Path, or none for a bug that did not need a design choice.\n\n"
             "## Commands run\n\n## Risk\n\n"
-            "- [ ] This pull request does not mix product code with infra, workflows, or service.yaml\n"
+            "- [ ] I reviewed the Terraform plan when this pull request changes infrastructure\n"
         )
     openspec_dir = dest / "openspec"
     openspec_dir.mkdir(parents=True, exist_ok=True)
@@ -1783,7 +1784,22 @@ def _load_and_normalize(manifest_path: Path) -> tuple[dict, dict, list[dict]]:
     return app, mapping, app["components"]
 
 
+def app_owns_infra(manifest_path: Path, dest: Path) -> bool:
+    # Check both manifests so an external bootstrap manifest cannot reset ownership.
+    return any(
+        load(path).get("infra_management") == "app-owned"
+        for path in (dest / "service.yaml", manifest_path)
+        if path.is_file()
+    )
+
+
+def require_bootstrap(manifest_path: Path, dest: Path) -> None:
+    if app_owns_infra(manifest_path, dest):
+        raise SystemExit("Infrastructure is app-owned. Edit the checked-in files or run odlc sync for rules.")
+
+
 def phase_init_runtime(manifest_path: Path, dest: Path, overwrite: bool = False) -> None:
+    require_bootstrap(manifest_path, dest)
     app, mapping, components = _load_and_normalize(manifest_path)
     dest.mkdir(parents=True, exist_ok=True)
     if manifest_path.resolve() != (dest / "service.yaml").resolve():
@@ -1802,6 +1818,7 @@ def phase_init_runtime(manifest_path: Path, dest: Path, overwrite: bool = False)
 
 
 def phase_add_data(manifest_path: Path, dest: Path) -> None:
+    require_bootstrap(manifest_path, dest)
     app, mapping, components = _load_and_normalize(manifest_path)
     for component in components:
         comp_dir = component_dir_for(dest, component)
@@ -1812,6 +1829,7 @@ def phase_add_data(manifest_path: Path, dest: Path) -> None:
 
 
 def phase_add_tests(manifest_path: Path, dest: Path) -> None:
+    require_bootstrap(manifest_path, dest)
     _, _, components = _load_and_normalize(manifest_path)
     for component in components:
         comp_dir = component_dir_for(dest, component)
@@ -1820,6 +1838,15 @@ def phase_add_tests(manifest_path: Path, dest: Path) -> None:
 
 
 def phase_sync_infra(manifest_path: Path, dest: Path, ci_only: bool = False) -> None:
+    if app_owns_infra(manifest_path, dest):
+        committed_manifest = dest / "service.yaml"
+        if not committed_manifest.is_file() or manifest_path.resolve() != committed_manifest.resolve():
+            raise SystemExit("Run rules sync with the app-owned repository's service.yaml.")
+        _, mapping, components = _load_and_normalize(committed_manifest)
+        _, rules = selected(mapping, components)
+        write_bundle(dest, rules)
+        print("Infrastructure is app-owned. Refreshed agent rules.")
+        return
     app, mapping, components = _load_and_normalize(manifest_path)
     dest.mkdir(parents=True, exist_ok=True)
     if manifest_path.resolve() != (dest / "service.yaml").resolve():

@@ -10,6 +10,10 @@
       "type": "string",
       "pattern": "^[a-z][a-z0-9-]{1,48}$"
     },
+    "infra_management": {
+      "enum": ["generator", "app-owned"],
+      "description": "Who maintains Terraform and deployment workflows. Omission keeps generator ownership."
+    },
     "prefix": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9-]{1,20}$",

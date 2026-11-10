@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from yaml_subset import parse
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "2"
+VERSION = "3"
 START_MARKER = "<!-- sdlc-rules-start -->"
 END_MARKER = "<!-- sdlc-rules-end -->"
 

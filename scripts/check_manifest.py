@@ -431,6 +431,9 @@ def check(data: dict) -> list[str]:
     if data.get("prefix") and PREFIX.fullmatch(str(data["prefix"])) is None:
         errors.append(f"prefix {data['prefix']!r} is not a lowercase slug (1-20 chars)")
 
+    if data.get("infra_management", "generator") not in ("generator", "app-owned"):
+        errors.append("infra_management must be generator or app-owned")
+
     if "preset" in data and data["preset"] not in PRESET_DEFAULTS:
         errors.append(
             f"preset {data['preset']!r} is not supported. "

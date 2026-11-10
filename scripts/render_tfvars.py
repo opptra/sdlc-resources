@@ -17,6 +17,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from yaml_subset import parse
 
 
+def deployment_name(manifest: dict, environment: str) -> str:
+    app_name = str(manifest.get("app_name") or manifest["name"])
+    prefix = str(manifest.get("prefix") or app_name)
+    comp_name = str(manifest["name"])
+    legacy_svc = str(manifest.get("legacy_service_name") or "").strip()
+    if legacy_svc and environment == "prod":
+        resource_name = legacy_svc
+    elif comp_name.startswith(f"{prefix}-") or comp_name.startswith(f"{app_name}-") or comp_name in {prefix, app_name}:
+        resource_name = comp_name
+    else:
+        resource_name = f"{prefix}-{comp_name}"
+    return resource_name[:48].rstrip("-")
+
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", type=Path, required=True)
@@ -49,17 +64,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("sha must be the git commit, not a floating tag")
 
     project = args.staging_project if args.environment == "staging" else str(manifest["prod_project"])
-    app_name = str(manifest.get("app_name") or manifest["name"])
-    prefix = str(manifest.get("prefix") or app_name)
-    comp_name = str(manifest["name"])
-    legacy_svc = str(manifest.get("legacy_service_name") or "").strip()
-    if legacy_svc and args.environment == "prod":
-        resource_name = legacy_svc
-    elif comp_name.startswith(f"{prefix}-") or comp_name.startswith(f"{app_name}-") or comp_name in {prefix, app_name}:
-        resource_name = comp_name
-    else:
-        resource_name = f"{prefix}-{comp_name}"
-    resource_name = resource_name[:48].rstrip("-")
+    resource_name = deployment_name(manifest, args.environment)
 
     image = (
         f"{manifest['region']}-docker.pkg.dev/{project}/{args.artifact_repo}/"

@@ -1,0 +1,314 @@
+name: Terraform promotion
+
+on:
+  workflow_call:
+    inputs:
+      component:
+        description: Repo-relative component directory containing infra/
+        type: string
+        required: true
+      manifest:
+        description: Repo-relative manifest read by render_tfvars.py
+        type: string
+        required: true
+      staging_bucket:
+        type: string
+        required: true
+      staging_prefix:
+        type: string
+        required: true
+      production_bucket:
+        type: string
+        required: true
+      production_prefix:
+        type: string
+        required: true
+      staging_project:
+        type: string
+        default: opptra-staging
+      artifact_repo:
+        type: string
+        default: apps-release
+      docker_context:
+        type: string
+        default: ""
+      dockerfile:
+        type: string
+        default: ""
+      staging_adoption_image:
+        description: Existing staging image for a handoff-only plan and apply
+        type: string
+        default: ""
+      adoption_image:
+        description: Exact live image reference for an import-only production run
+        type: string
+        default: ""
+      pre_apply:
+        description: Optional reviewed script run after checks and image build, before the release apply
+        type: string
+        default: ""
+      post_apply:
+        description: Optional reviewed smoke test script run after a successful apply
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+jobs:
+  terraform:
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/staging') ||
+      (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        (github.event.action != 'closed' || (github.event.pull_request.merged &&
+          github.base_ref == 'production' && github.head_ref == 'main' &&
+          github.ref == 'refs/heads/production')))
+    runs-on: ubuntu-latest
+    environment: >-
+      ${{ github.event_name == 'push' && 'staging' ||
+          (github.event.action == 'closed' && 'production') ||
+          (github.base_ref == 'production' && 'production-plan') || 'staging-plan' }}
+    concurrency:
+      group: ${{ github.event_name == 'push' && 'terraform-staging' || github.event.action == 'closed' && 'terraform-production' || format('terraform-preview-{0}', github.run_id) }}-${{ inputs.component }}
+      cancel-in-progress: false
+    env:
+      COMPONENT: ${{ inputs.component }}
+      MANIFEST: ${{ inputs.manifest }}
+      TARGET: ${{ github.base_ref == 'production' && 'prod' || 'staging' }}
+      APPLY: ${{ github.event_name == 'push' || github.event.action == 'closed' }}
+      BUCKET: ${{ github.base_ref == 'production' && inputs.production_bucket || inputs.staging_bucket }}
+      STAGING_STATE: ${{ format('{0}/{1}', inputs.staging_bucket, inputs.staging_prefix) }}
+      PRODUCTION_STATE: ${{ format('{0}/{1}', inputs.production_bucket, inputs.production_prefix) }}
+      PREFIX: ${{ github.base_ref == 'production' && inputs.production_prefix || inputs.staging_prefix }}
+      STAGING_PROJECT: ${{ inputs.staging_project }}
+      ARTIFACT_REPO: ${{ inputs.artifact_repo }}
+      STAGING_ADOPTION_IMAGE: ${{ inputs.staging_adoption_image }}
+      PRODUCTION_ADOPTION_IMAGE: ${{ inputs.adoption_image }}
+      BUILD_CONTEXT: ${{ inputs.docker_context }}
+      DOCKERFILE: ${{ inputs.dockerfile }}
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_SOURCE_BRANCH: ${{ github.head_ref }}
+      PR_HEAD: ${{ github.event.pull_request.head.sha }}
+      TF_IN_AUTOMATION: "true"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.action == 'closed' && github.event.pull_request.merge_commit_sha || github.sha }}
+          persist-credentials: false
+      - name: Resolve release inputs
+        id: release
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == prod && "$PR_SOURCE_BRANCH" != main ]]; then
+            echo 'Promote from main into production.' >&2
+            exit 1
+          fi
+          if [[ "$STAGING_STATE" == "$PRODUCTION_STATE" ]]; then
+            echo 'Staging and production must have separate Terraform state.' >&2
+            exit 1
+          fi
+          if [[ -z "$BUCKET" || -z "$PREFIX" ]]; then
+            echo 'Specify the existing or new Terraform backend bucket and prefix explicitly.' >&2
+            exit 1
+          fi
+          cd "$GITHUB_WORKSPACE"
+          for old in plan deploy-staging deploy-production; do
+            if [[ -f ".github/workflows/$old.yml" ]]; then
+              echo "Retire the old .github/workflows/$old.yml caller before enabling promotion." >&2
+              exit 1
+            fi
+          done
+          infra=$(realpath "$COMPONENT/infra")
+          manifest=$(realpath "$MANIFEST")
+          for path in "$infra" "$manifest"; do
+            [[ "$path" == "$GITHUB_WORKSPACE/"* ]] || exit 1
+          done
+          tree=$(git rev-parse HEAD^{tree})
+          key=$(printf '%s' "$COMPONENT" | sha256sum | cut -c1-16)
+          adoption_image=$STAGING_ADOPTION_IMAGE
+          [[ "$TARGET" != prod ]] || adoption_image=$PRODUCTION_ADOPTION_IMAGE
+          mode=release
+          if [[ -n "$adoption_image" ]]; then
+            mode=adopt
+          fi
+          if [[ "$mode" == release ]]; then
+            context=$(realpath "${BUILD_CONTEXT:-$COMPONENT}")
+            dockerfile=$(realpath "${DOCKERFILE:-$COMPONENT/Dockerfile}")
+            [[ -d "$context" && -f "$dockerfile" ]]
+            [[ "$context" == "$GITHUB_WORKSPACE" || "$context" == "$GITHUB_WORKSPACE/"* ]]
+            [[ "$dockerfile" == "$context/"* ]]
+          fi
+          {
+            echo "infra=$infra"
+            echo "tree=$tree"
+            echo "mode=$mode"
+            echo "artifact=terraform-review-$PR_NUMBER-$key"
+          } >> "$GITHUB_OUTPUT"
+          python3 scripts/render_tfvars.py --manifest "$manifest" --environment "$TARGET" \
+            --staging-project "$STAGING_PROJECT" --artifact-repo "$ARTIFACT_REPO" \
+            --sha "$tree" --out "$RUNNER_TEMP/release.tfvars.json" --github-output "$GITHUB_OUTPUT"
+          if [[ "$mode" == adopt ]]; then
+            jq --arg image "$adoption_image" '.image = $image' "$RUNNER_TEMP/release.tfvars.json" \
+              > "$RUNNER_TEMP/adopt.tfvars.json"
+            mv "$RUNNER_TEMP/adopt.tfvars.json" "$RUNNER_TEMP/release.tfvars.json"
+          fi
+      - name: Find successful plan for this pull request
+        if: env.APPLY == 'true' && env.TARGET == 'prod'
+        env:
+          ARTIFACT: ${{ steps.release.outputs.artifact }}
+        run: |
+          set -euo pipefail
+          workflow_ref=${GITHUB_WORKFLOW_REF%@*}
+          workflow=${workflow_ref##*/}
+          run_ids=$(gh api --paginate --method GET \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs" \
+            -f event=pull_request -f status=success -f head_sha="$PR_HEAD" \
+            --jq '.workflow_runs[].id')
+          for run_id in $run_ids; do
+            if gh run download "$run_id" --name "$ARTIFACT" --dir "$RUNNER_TEMP/review"; then
+              exit 0
+            fi
+          done
+          echo 'No successful production plan receipt found for this pull request.' >&2
+          exit 1
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.5"
+          terraform_wrapper: false
+      - name: Check formatting and validate
+        working-directory: ${{ steps.release.outputs.infra }}
+        run: |
+          terraform fmt -check -recursive
+          terraform init -input=false -backend=false
+          terraform validate
+      - name: Require environment-specific identity
+        env:
+          WIF_PROVIDER: ${{ vars.WIF_PROVIDER }}
+          WIF_SERVICE_ACCOUNT: ${{ vars.WIF_SERVICE_ACCOUNT }}
+        run: |
+          test -n "$WIF_PROVIDER" && test -n "$WIF_SERVICE_ACCOUNT" || {
+            echo 'Configure WIF_PROVIDER and WIF_SERVICE_ACCOUNT in the matching GitHub environment.' >&2
+            exit 1
+          }
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
+      - name: Plan and check policy
+        working-directory: ${{ steps.release.outputs.infra }}
+        env:
+          TREE: ${{ steps.release.outputs.tree }}
+          MODE: ${{ steps.release.outputs.mode }}
+        run: |
+          set -euo pipefail
+          terraform init -input=false -backend-config="bucket=$BUCKET" -backend-config="prefix=$PREFIX"
+          vars=()
+          if [[ -f "$TARGET.tfvars" ]]; then
+            vars+=("-var-file=$TARGET.tfvars")
+          fi
+          lock=(-lock-timeout=120s)
+          expected=()
+          if [[ "$APPLY" == false ]]; then
+            lock=(-lock=false)
+          elif [[ "$TARGET" == prod ]]; then
+            expected=(--expected "$RUNNER_TEMP/review/receipt.json")
+          fi
+          terraform plan -input=false -no-color "${lock[@]}" "${vars[@]}" \
+            -var-file="$RUNNER_TEMP/release.tfvars.json" -out="$RUNNER_TEMP/release.tfplan" \
+            > /dev/null
+          terraform show -no-color "$RUNNER_TEMP/release.tfplan" > "$RUNNER_TEMP/plan.txt"
+          if (( $(wc -c < "$RUNNER_TEMP/plan.txt") > 900000 )); then
+            echo 'The plan is too large for the review summary. Split the change into smaller promotions.' >&2
+            exit 1
+          fi
+          {
+            echo "### Terraform plan for $TARGET"
+            echo '~~~text'
+            cat "$RUNNER_TEMP/plan.txt"
+            echo '~~~'
+          } >> "$GITHUB_STEP_SUMMARY"
+          terraform show -json "$RUNNER_TEMP/release.tfplan" > "$RUNNER_TEMP/plan.json"
+          python3 "$GITHUB_WORKSPACE/scripts/promotion_receipt.py" "$RUNNER_TEMP/plan.json" \
+            --tree "$TREE" --environment "$TARGET" --target "$BUCKET/$PREFIX" --mode "$MODE" \
+            --out "$RUNNER_TEMP/receipt.json" "${expected[@]}"
+      - uses: actions/upload-artifact@v4
+        if: env.APPLY == 'false' && env.TARGET == 'prod'
+        with:
+          name: ${{ steps.release.outputs.artifact }}
+          path: ${{ runner.temp }}/receipt.json
+          if-no-files-found: error
+      - name: Verify release is current
+        if: env.APPLY == 'true'
+        run: |
+          set -euo pipefail
+          branch=staging
+          [[ "$TARGET" != prod ]] || branch=production
+          current=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$branch" --jq .object.sha)
+          [[ "$current" == "$(git rev-parse HEAD)" ]] || {
+            echo "A newer $branch commit exists. Skipping this apply." >&2
+            exit 1
+          }
+      - uses: google-github-actions/setup-gcloud@v2
+        if: env.APPLY == 'true' && steps.release.outputs.mode == 'release'
+      - name: Build or reuse the immutable release image
+        if: env.APPLY == 'true' && steps.release.outputs.mode == 'release'
+        env:
+          IMAGE: ${{ steps.release.outputs.image }}
+          PROJECT: ${{ steps.release.outputs.project_id }}
+          REGION: ${{ steps.release.outputs.region }}
+        run: |
+          set -euo pipefail
+          immutable=$(gcloud artifacts repositories describe "$ARTIFACT_REPO" --project "$PROJECT" \
+            --location "$REGION" --format='value(dockerConfig.immutableTags)')
+          if [[ "${immutable,,}" != true ]]; then
+            echo 'The release image repository must enforce immutable tags.' >&2
+            exit 1
+          fi
+          gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+          if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
+            exit 0
+          fi
+          source_dir=$(mktemp -d "$RUNNER_TEMP/image-source.XXXXXX")
+          git archive HEAD | tar -x -C "$source_dir"
+          context=$(realpath "$source_dir/${BUILD_CONTEXT:-$COMPONENT}")
+          dockerfile=$(realpath "$source_dir/${DOCKERFILE:-$COMPONENT/Dockerfile}")
+          [[ "$context" == "$source_dir" || "$context" == "$source_dir/"* ]]
+          [[ "$dockerfile" == "$context/"* ]]
+          docker build --file "$dockerfile" --tag "$IMAGE" "$context"
+          docker push "$IMAGE"
+      - name: Apply reviewed plan
+        if: env.APPLY == 'true'
+        working-directory: ${{ steps.release.outputs.infra }}
+        env:
+          MODE: ${{ steps.release.outputs.mode }}
+          PRE_APPLY: ${{ inputs.pre_apply }}
+          POST_APPLY: ${{ inputs.post_apply }}
+          AUTH: ${{ steps.release.outputs.auth }}
+        run: |
+          set -euo pipefail
+          run_hook() {
+            local hook
+            hook=$(realpath "$GITHUB_WORKSPACE/$1")
+            [[ "$hook" == "$GITHUB_WORKSPACE/"* ]]
+            bash "$hook"
+          }
+          branch=staging
+          [[ "$TARGET" != prod ]] || branch=production
+          current=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$branch" --jq .object.sha)
+          [[ "$current" == "$(git rev-parse HEAD)" ]]
+          if [[ "$MODE" == release && -n "$PRE_APPLY" ]]; then
+            run_hook "$PRE_APPLY"
+          fi
+          terraform apply -input=false -lock-timeout=120s "$RUNNER_TEMP/release.tfplan"
+          if [[ -n "$POST_APPLY" ]]; then
+            run_hook "$POST_APPLY"
+          elif [[ "$AUTH" == public || "$AUTH" == app-login ]]; then
+            if uri=$(terraform output -raw uri 2>/dev/null) && [[ -n "$uri" ]]; then
+              curl --fail --silent --show-error --retry 3 "${uri%/}/api/health"
+            fi
+          fi

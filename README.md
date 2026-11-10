@@ -4,6 +4,8 @@ The standard for how an Opptra app is set up, aligned, changed, reviewed, and de
 
 `service.yaml` holds the facts: production project, region, workloads/components, capabilities, and any `unmet` platform gaps. [mapping.yaml](mapping.yaml) decides the files, the CI, the deploy, and the agent rules. [odlc](scripts/odlc.py) (`scripts/odlc.py`) and [scripts/generate.py](scripts/generate.py) apply that decision in phases (`check`, `status`, `init-runtime`, `add-data`, `add-tests`, `sync-infra`). People do not hand-copy a hardcoded pipeline.
 
+After bootstrap or adoption, app owners can take over Terraform and deployment callers through [infrastructure handoff and promotion](docs/infra-handoff.md).
+
 ## Branches
 
 `main` is the default branch. A feature pull request targets `main`. Merging to `main` does not deploy.

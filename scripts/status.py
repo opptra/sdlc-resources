@@ -504,14 +504,15 @@ def inspect_repo(repo_dir: Path) -> dict:
                     ci_path_errors.append(f"ci.yml references missing directory {wd}")
 
     workflows = repo_dir / ".github" / "workflows"
-    deploy_connected = (workflows / "deploy-staging.yml").is_file() or (
-        workflows / "deploy-production.yml"
-    ).is_file()
-    image_path_errors, image_notes = _image_layout(
-        repo_dir,
-        normalized_data.get("components", []) if normalized_data else [],
-        deploy_connected,
+    promotion = (workflows / "promotion.yml").is_file()
+    deploy_connected = promotion or any(
+        (workflows / name).is_file() for name in ("deploy-staging.yml", "deploy-production.yml")
     )
+    image_components = (
+        [] if manifest_data.get("infra_management") == "app-owned"
+        else normalized_data.get("components", [])
+    )
+    image_path_errors, image_notes = _image_layout(repo_dir, image_components, deploy_connected)
     layout_errors = ci_path_errors + image_path_errors
 
     branches = _git_branches(repo_dir)
@@ -804,6 +805,12 @@ def inspect_repo(repo_dir: Path) -> dict:
     return {
         "aligned": aligned,
         "has_service_yaml": has_manifest,
+        "infra_management": manifest_data.get("infra_management", "generator"),
+        "promotion_workflow": ".github/workflows/promotion.yml" if promotion else None,
+        "terraform_roots": sorted({
+            str(p.parent.relative_to(repo_dir)) for p in tf_files
+            if p.parent.name == "infra"
+        }),
         "manifest_errors": manifest_errors,
         "rule_version": VERSION,
         "expected_rules": expected_rules,
@@ -867,6 +874,8 @@ PILLAR_MEANS = {
 
 def render_tables(report: dict) -> str:
     lines = [
+        f"Infrastructure ownership: {report['infra_management']}",
+        "",
         "### Table A: 17-Point SDLC Scorecard",
         "",
         "| # | Area | Current Setup | Target Standard | Up to the Mark? | Action / Changes to be Done | What this means for you |",
@@ -915,6 +924,11 @@ def main(argv: list[str] | None = None) -> int:
     else:
         status = "ok" if report["aligned"] else "needs-alignment"
         print(f"odlc status: {status}")
+        print(f"Infrastructure ownership: {report['infra_management']}")
+        for root in report["terraform_roots"]:
+            print(f"  Terraform: {root}")
+        if report["promotion_workflow"]:
+            print(f"  Promotion: {report['promotion_workflow']}")
         for err in (
             report["manifest_errors"]
             + report["rule_errors"]

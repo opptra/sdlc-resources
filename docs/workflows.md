@@ -6,6 +6,8 @@ nav_order: 1
 
 # How an Opptra app is created, changed, and fixed
 
+For app-owned Terraform and automatic promotion, follow [infrastructure handoff and promotion](infra-handoff.md). The generator-owned paths below apply to apps that use the earlier workflow.
+
 The skills are already on each developer's machine. They come from `opptra/agent-skills`, installed once via `./install.sh`. Those skills check out the `generator_sha` recorded in `.sdlc/state.yaml` from the local cache (`~/.cache/opptra/sdlc-resources.git`) when they need the generator. They fetch `opptra/sdlc-resources` `main` only when that field is missing, or when the developer asks to upgrade the generator. A phase records the commit it ran. Nobody keeps a manual checkout of `opptra/sdlc-resources` inside an app repo.
 
 If the sentence does not name a skill, use `opptra`. It only picks the route:
