@@ -12,7 +12,7 @@ nav_order: 6
 |---|---|
 | Ship today | No files. The next step is `feature` or `bug`. |
 | Make the agent safe | The **Adopt now** list below. If `deploy.sh`, `vercel.json`, or `fly.toml` is present, CI is generated and that deploy path stays. |
-| Move the host | `adopt-terraform` in the same chat. `deploy.sh` stays until the first production Terraform apply has succeeded. |
+| Move the host | `adopt-terraform` in the same chat. Review parity and rehearse the full staging release before handoff. See [legacy adoption](infra-handoff.md#adopt-a-live-production-app). |
 
 A bug on a repository that has never been aligned still uses `bug`. Alignment is not required to merge that fix.
 
@@ -34,9 +34,9 @@ Do not delete the current deploy path during **Adopt now**.
 
 `make ci` builds that image only after `sync-infra` writes the deploy workflows. The **Adopt now** path uses `--ci-only`, leaves `cloudbuild.yaml` or `deploy.sh` in place, and does not build the image. The image build starts when **Move the host** connects the shared deploy workflow.
 
-## 2. Fill capability gaps (phased scripts + skill)
+## 2. Fill capability gaps before handoff
 
-When `odlc status --json` detects code using a capability that is missing its standard wiring or tests:
+For `adoption` and `app-owned`, edit the files that own the capability directly and use `odlc sync` to refresh rules. For generator-owned repos, use these phases when `odlc status --json` finds missing wiring or tests:
 - Run `odlc add-data` to add missing DB/Firestore/storage/secret helpers.
 - Run `odlc add-tests` to add missing entrypoint/health tests and local fixtures.
 - Run `odlc sync-infra` when the developer approves generating `infra/` and workflows.

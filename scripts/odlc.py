@@ -13,6 +13,7 @@ Subcommands:
   add-data <service.yaml> [dest]              Phase 3: Install data/storage/queue/secret packages & helpers
   add-tests <service.yaml> [dest]             Phase 4: Configure test runners and capability test fixtures
   setup-promotion <service.yaml> [dest] --workflow-ref <sha>
+  adoption-check --repo <owner/repository>
   sync [service.yaml] [dest]                  Alias for `sync-infra`
   sync-infra <service.yaml> [dest] [--ci-only] Phase 5: Generate Terraform, workflows, rules, and README
   all <service.yaml> [dest]                   Run all phases in order and record state
@@ -31,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import check_manifest
 import discover_infra
 import status as status_mod
+import adoption_check
 import setup_promotion
 from generate import (
     phase_add_data,
@@ -261,6 +263,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_secrets(rest)
     if cmd == "doctor":
         return status_mod.main([*rest, "--table"])
+    if cmd == "adoption-check":
+        return adoption_check.main(rest)
     if cmd == "setup-promotion":
         return setup_promotion.main(rest)
     if cmd == "discover-infra":

@@ -312,3 +312,6 @@ jobs:
               curl --fail --silent --show-error --retry 3 "${uri%/}/api/health"
             fi
           fi
+      - name: Completed staging release
+        if: env.APPLY == 'true' && env.TARGET == 'staging' && steps.release.outputs.mode == 'release'
+        run: echo 'The staging release and configured checks completed.'

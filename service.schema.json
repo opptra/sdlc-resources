@@ -11,7 +11,7 @@
       "pattern": "^[a-z][a-z0-9-]{1,48}$"
     },
     "infra_management": {
-      "enum": ["generator", "app-owned"],
+      "enum": ["generator", "adoption", "app-owned"],
       "description": "Who maintains Terraform and deployment workflows. Omission keeps generator ownership."
     },
     "prefix": {

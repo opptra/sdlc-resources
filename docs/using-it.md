@@ -15,3 +15,4 @@ The pages in this section are the path a developer follows.
 - [Bug](bug.md)
 - [Align](align.md)
 - [Migrate](migrating.md)
+- [Infrastructure handoff and promotion](infra-handoff.md)

@@ -40,7 +40,7 @@ A direct push to `staging` deploys staging. `staging` is not a protected branch,
 
 `deploy-staging` and `deploy-production` also accept `workflow_dispatch`. A run from the Actions page deploys only the matching branch, and that new run resolves the shared workflows at `main` again. Re-running an old job keeps the shared workflow commit from the original run.
 
-Product code and changes to `infra/`, `.github/workflows`, `config/jobs.yaml` schedules, or `service.yaml` go in separate pull requests (`feature` / `bug` for product code, `change-app` for capabilities and schedules).
+Generator-owned apps use separate infrastructure and product PRs. After handoff, include coupled product and infrastructure changes in the same PR. Use `change-app` for standalone infrastructure work. See [handoff and promotion](infra-handoff.md).
 
 ## CI
 
@@ -64,7 +64,7 @@ Nickname ids such as `cx-smtp` did not match the variables the code reads, and b
 
 Keys and passwords are secrets. Domains, ports, email addresses, lists of emails, and flags such as `DRY_RUN` are plain environment variables. A list is one comma-separated string. The generator writes both from `service.yaml`. A secret value is not committed. A plain value is committed and copied into `.env.example`.
 
-An agent that needs a new setting classifies it, edits the root `service.yaml`, and runs `odlc sync-infra` before product code. The user does not name the skill or the script. That manifest edit is its own pull request. Product code then reads a plain value with `get_env` and a secret with `get_secret`.
+An agent classifies the setting first. For generator-owned apps, update `service.yaml` and run `odlc sync-infra`. During adoption and after handoff, update the owning Terraform inputs. Product code reads a plain value with `get_env` and a secret with `get_secret`.
 
 The deploy creates the secret shells first. Cloud Run mounts `latest` only after a version exists, because it opens that version while saving the revision. When a mounted secret has no version, the workflow stops and prints the ids. A person adds version 1 in Secret Manager and re-runs the same workflow. The next run mounts the secrets and updates Cloud Run.
 
@@ -72,7 +72,7 @@ The account that mounts a secret receives `roles/secretmanager.secretAccessor` o
 
 ## Agent rules
 
-`rules/` in this repository is the source. `odlc sync-infra` compiles `AGENTS.md`, `CLAUDE.md`, and `.cursor/rules/*.mdc` from the capabilities active in `service.yaml`.
+`rules/` in this repository is the source. For a legacy migration, the [parity review and staging rehearsal](infra-handoff.md#adopt-a-live-production-app) precede the app-owned handoff. `odlc sync-infra` compiles `AGENTS.md`, `CLAUDE.md`, and `.cursor/rules/*.mdc` from the capabilities active in `service.yaml`.
 
 ## Product UI
 

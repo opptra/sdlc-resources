@@ -1,6 +1,7 @@
 """Offline integration coverage for handoff and reviewed Terraform promotion."""
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -50,6 +51,8 @@ class PromotionTests(unittest.TestCase):
         self.assertEqual(protected, {file: file.read_bytes() for file in protected})
         self.assertIn("sdlc-rules-version: 3", agents.read_text())
         self.assertIn("Keep me.", agents.read_text())
+        for rule in ("AGENTS.md", "CLAUDE.md", ".cursor/rules/always.mdc"):
+            self.assertIn("docs/terraform-adoption.json", (repo / rule).read_text())
         report = json.loads(self.odlc("status", repo, "--json").stdout)
         self.assertEqual(report["infra_management"], "app-owned")
         self.assertEqual(report["terraform_roots"], ["components/console/infra", "components/nightly/infra"])
@@ -82,6 +85,89 @@ class PromotionTests(unittest.TestCase):
         self.assertIn('staging_bucket: "opptra-staging-tfstate"', caller)
         self.assertIn('production_bucket: "opptra-applications-tfstate"', caller)
         self.assertNotEqual(self.odlc(*args, check=False).returncode, 0)
+
+    def test_adoption_gates_handoff_but_not_routine_changes(self):
+        repo = self.root / "app"
+        self.odlc("all", FIXTURE, repo)
+        manifest = repo / "service.yaml"
+        bootstrap = manifest.read_text()
+        manifest.write_text(bootstrap + "\ninfra_management: adoption\n")
+        self.odlc("setup-promotion", manifest, repo, "--workflow-ref", "a" * 40,
+                  "--replace-bootstrap-workflows")
+        caller = (repo / ".github/workflows/promotion.yml").read_text()
+        self.assertIn("needs.adoption.outputs.production == 'true'", caller)
+
+        def git(*args):
+            return subprocess.run(
+                ["git", "-c", "user.name=SDLC test", "-c", "user.email=test@example.invalid", *args],
+                cwd=repo, check=True, capture_output=True, text=True,
+            ).stdout.strip()
+
+        def check(*args):
+            return subprocess.run(
+                [sys.executable, str(ROOT / "scripts/odlc.py"), "adoption-check",
+                 "--repo", "opptra/example", *args],
+                cwd=repo, env=env, capture_output=True, text=True,
+            )
+
+        mock = self.root / "gh"
+        mock.write_text(
+            '#!/bin/sh\ncase "$2" in */jobs*) cat "$ADOPTION_JOBS";; *) cat "$ADOPTION_RUN";; esac\n'
+        )
+        mock.chmod(0o755)
+        run = self.root / "run.json"
+        jobs = self.root / "jobs.json"
+        env = dict(os.environ, PATH=f"{self.root}{os.pathsep}{os.environ['PATH']}",
+                   ADOPTION_RUN=str(run), ADOPTION_JOBS=str(jobs))
+        git("init")
+        git("add", ".")
+        git("commit", "-m", "Rehearsal")
+        sha = git("rev-parse", "HEAD")
+        self.assertEqual(check().stdout.strip(), "production=false")
+        manifest.write_text(bootstrap + "\ninfra_management: app-owned\n")
+
+        report = repo / "docs/terraform-adoption.json"
+        report.parent.mkdir(exist_ok=True)
+        rows = [
+            dict(category=category, item=category, live="Live inventory",
+                 legacy="Deploy script", proposed="Workflow or Terraform",
+                 status="verified", disposition="import", owner="App",
+                 verification="Staging run evidence")
+            for category in ("workloads", "triggers", "runtime", "identity", "secrets", "data", "release")
+        ]
+
+        def write_report(items):
+            report.write_text(json.dumps(dict(review="Migration PR", items=items,
+                                              staging=dict(run_id=42, commit=sha))))
+
+        write_report(rows[:-1])
+        self.assertIn("Missing parity categories: release", check().stderr)
+        rows[1]["status"] = "unverified"
+        write_report(rows)
+        self.assertIn("resolve missing or unverified", check().stderr)
+        rows[1]["status"] = "verified"
+        write_report(rows)
+        run.write_text(json.dumps(dict(event="push", head_branch="staging", head_sha=sha,
+                                       conclusion="success", path=".github/workflows/promotion.yml",
+                                       run_attempt=1)))
+        steps = [dict(name="Apply reviewed plan", conclusion="success")]
+        jobs.write_text(json.dumps(dict(jobs=[dict(steps=steps)])))
+        self.assertIn("must execute the deployment", check().stderr)
+        steps.append(dict(name="Completed staging release", conclusion="success"))
+        jobs.write_text(json.dumps(dict(jobs=[dict(steps=steps)])))
+        self.assertIn("must execute the deployment", check().stderr)
+        jobs.write_text(json.dumps(dict(jobs=[dict(steps=steps), dict(steps=steps)])))
+        result = check("--base", sha)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "production=true")
+
+        git("add", ".")
+        git("commit", "-m", "Handoff")
+        handoff = git("rev-parse", "HEAD")
+        (repo / ".github/workflows/promotion.yml").write_text(caller + "# Later release edit\n")
+        self.assertIn("Rehearse the updated tree", check("--base", sha).stderr)
+        report.unlink()
+        self.assertEqual(check("--base", handoff).stdout.strip(), "production=true")
 
     @unittest.skipUnless(shutil.which("terraform"), "Terraform CLI required")
     def test_real_plans_use_separate_state_and_require_review(self):

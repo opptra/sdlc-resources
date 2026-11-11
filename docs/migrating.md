@@ -6,42 +6,11 @@ nav_order: 7
 
 # Migrate an existing repository
 
-The language can stay. The contract is the branches, the required lint check, the agent rules, and deploy through the workflow. Do the steps in order. A later step depends on the earlier one having been used at least once.
+Start with `align-app` to inspect the repository and choose a path. For a repository that needs CI and agent rules while keeping its current deploy path, follow [Align an existing repository](align.md). To replace a manual production deployment with Terraform, use `adopt-terraform` and follow [Adopt a live production app](infra-handoff.md#adopt-a-live-production-app).
 
-## 1. Add the manifest and the callers
+1. Compare live production, the legacy deploy scripts and their dependencies, and the proposed Terraform and workflow. Record coverage, owners, and intentional differences in `docs/terraform-adoption.json`.
+2. Set `infra_management: adoption` and rehearse the complete release on `staging`. Keep production on its current deployment path during rehearsal.
+3. Record the successful staging run and review evidence in the handoff PR. CI checks them before the switch to `app-owned`.
+4. Review the production imports and references, switch to a single production writer, and verify the new release. Retire the old path after the first successful Terraform apply.
 
-Write a service.yaml of facts and run [scripts/generate.py](../scripts/generate.py) into an empty directory, then copy in the pieces that match this repo. Do not copy a hardcoded pipeline by hand. Point prod_project at the project that already runs production.
-
-Point `prod_project` at the project that already runs production. Do not move production projects as part of this step.
-
-Protect `main` and `production` with [scripts/protect-branches.sh](../scripts/protect-branches.sh) after CI has run once. `staging` stays unprotected. `main` is the default branch and does not deploy. Create `staging` and `production` from `main`.
-
-## 2. Make lint a required check
-
-The reusable CI workflow expects `pyproject.toml` and `frontend/` at the repo root, matching the template. An existing repo that is laid out differently should pass `working_directory` only if the whole app lives in one subdirectory. If Python and the UI are split in a way the workflow cannot see, change the caller to the layout and keep the check name stable. Ask in the `opptra/sdlc-resources` review rather than inventing a second pipeline.
-
-The deploy workflows build `Dockerfile` in the component directory. When the Dockerfile, or the files it copies, live somewhere else in the repo, set `docker_context` and `dockerfile` on the component. Both paths stay inside the repo, and the Dockerfile stays inside the context. That pair is the shared workflow's input. The workflow shell variable is `BUILD_CONTEXT`. Do not export it as `DOCKER_CONTEXT`; the Docker CLI reserves that name.
-
-Repos with no tests pass `run_tests: false` until the first test file exists. After that, remove the input and let CI discover the tests.
-
-Deploy is still the old path at the end of this step.
-
-## 3. Staging
-
-Create the GitHub environments and run [scripts/bind-staging.sh](../scripts/bind-staging.sh) once `opptra-staging` exists. The developer does this step. The full order, including what a repository admin adds on GitHub, is in [bind.md](bind.md). If the Cloud Run service already exists, import it into the staging state before the first apply. The commands are in [resources.md](resources.md). Then push to `staging` and confirm `/api/health` on the URL the workflow comments. The plan on that pull request should be an update, not a second service.
-
-## 4. Production
-
-Send [scripts/bind-production.sh](../scripts/bind-production.sh) to someone who can change IAM in `prod_project`. They run it and set the two production Actions variables, as [bind.md](bind.md) describes. Then open the pull request from `main` into `production`. Merge it. Confirm the Cloud Run revision in `prod_project` is the same commit SHA.
-
-## 5. Remove the laptop path
-
-Delete `deploy.sh` and any documented `gcloud run deploy` from a laptop. Move secrets to Secret Manager. A script that remains for emergencies must default to staging, must refuse to run against the prod project without an explicit flag, and is not the documented path.
-
-## What this step does not include
-
-Moving a MIG, leaving Vercel, or moving Postgres off a VM is a runtime change. It happens after the workflow is the only deploy path. Do not combine it with the first production deploy through GitHub.
-
-## Pilot
-
-Use a small app that is already Cloud Run. `finance-ops` and `github-mcp-server` fit. Catalog, SCM, and the warehouse VM paths are the wrong first proof, because they also need a runtime move.
+Keep the existing production project and preserve Terraform state keys and addresses where already managed. Treat a runtime move, such as moving a database off a VM, as a separate migration.

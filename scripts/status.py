@@ -509,7 +509,7 @@ def inspect_repo(repo_dir: Path) -> dict:
         (workflows / name).is_file() for name in ("deploy-staging.yml", "deploy-production.yml")
     )
     image_components = (
-        [] if manifest_data.get("infra_management") == "app-owned"
+        [] if manifest_data.get("infra_management") in ("adoption", "app-owned")
         else normalized_data.get("components", [])
     )
     image_path_errors, image_notes = _image_layout(repo_dir, image_components, deploy_connected)
