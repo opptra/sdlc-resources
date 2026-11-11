@@ -21,8 +21,10 @@ def setup(manifest_path: Path, dest: Path, ref: str, replace_bootstrap: bool) ->
     errors = check(raw)
     if errors:
         raise ValueError("\n".join(errors))
-    if raw.get("infra_management") != "app-owned" or manifest_path != dest / "service.yaml":
-        raise ValueError("Set infra_management: app-owned in the target repository's service.yaml first.")
+    ownership = raw.get("infra_management")
+    if ownership not in ("adoption", "app-owned") or manifest_path != dest / "service.yaml":
+        raise ValueError("Set infra_management to adoption or app-owned in the target repository's service.yaml.")
+    adopting = ownership == "adoption"
     app = normalize(raw)
     mapping = load(ROOT / "mapping.yaml")
     components = app["components"]
@@ -123,14 +125,41 @@ def setup(manifest_path: Path, dest: Path, ref: str, replace_bootstrap: bool) ->
         "    if: github.event_name == 'push' || github.event.action != 'closed'",
         "    uses: ./.github/workflows/ci.yml",
     ])
+    if adopting:
+        lines.extend([
+            "  adoption:",
+            "    if: github.event_name == 'pull_request'",
+            "    runs-on: ubuntu-latest",
+            "    permissions:",
+            "      contents: read",
+            "      actions: read",
+            "    outputs:",
+            "      production: ${{ steps.check.outputs.production }}",
+            "    steps:",
+            "      - uses: actions/checkout@v4",
+            "        with:",
+            "          fetch-depth: 0",
+            "          ref: ${{ github.event.action == 'closed' && github.event.pull_request.merge_commit_sha || github.sha }}",
+            "      - id: check",
+            "        env:",
+            "          GH_TOKEN: ${{ github.token }}",
+            "          BASE: ${{ github.event.pull_request.base.sha }}",
+            '        run: python3 scripts/adoption_check.py --repo "$GITHUB_REPOSITORY" --base "$BASE" >> "$GITHUB_OUTPUT"',
+        ])
     for index, args in enumerate(jobs, start=1):
         lines.extend([
             f"  terraform-{index}:",
-            "    needs: ci",
+            "    needs: [ci, adoption]" if adopting else "    needs: ci",
             "    if: >-",
             "      ${{ always() && !cancelled() && (needs.ci.result == 'success' ||",
-            "        (github.event.action == 'closed' && needs.ci.result == 'skipped')) }}",
+            "        (github.event.action == 'closed' && needs.ci.result == 'skipped'))",
         ])
+        if adopting:
+            lines.extend([
+                "        && (github.event_name == 'push' || (needs.adoption.result == 'success' &&",
+                "          (github.base_ref != 'production' || needs.adoption.outputs.production == 'true')))",
+            ])
+        lines[-1] += " }}"
         lines.append(f"    uses: {mapping['repo']}/.github/workflows/terraform-promotion.yml@{ref}")
         lines.append("    with:")
         lines.extend(f"      {name}: {json.dumps(value)}" for name, value in args.items())
@@ -138,7 +167,10 @@ def setup(manifest_path: Path, dest: Path, ref: str, replace_bootstrap: bool) ->
     workflows.mkdir(parents=True, exist_ok=True)
     scripts = dest / "scripts"
     scripts.mkdir(exist_ok=True)
-    for name in ("promotion_receipt.py", "render_tfvars.py", "yaml_subset.py"):
+    helpers = ["promotion_receipt.py", "render_tfvars.py", "yaml_subset.py"]
+    if adopting:
+        helpers.append("adoption_check.py")
+    for name in helpers:
         path = scripts / name
         if not path.exists():
             shutil.copy2(ROOT / "scripts" / name, path)

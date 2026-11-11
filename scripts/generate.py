@@ -1787,7 +1787,7 @@ def _load_and_normalize(manifest_path: Path) -> tuple[dict, dict, list[dict]]:
 def app_owns_infra(manifest_path: Path, dest: Path) -> bool:
     # Check both manifests so an external bootstrap manifest cannot reset ownership.
     return any(
-        load(path).get("infra_management") == "app-owned"
+        load(path).get("infra_management") in ("adoption", "app-owned")
         for path in (dest / "service.yaml", manifest_path)
         if path.is_file()
     )
@@ -1795,7 +1795,7 @@ def app_owns_infra(manifest_path: Path, dest: Path) -> bool:
 
 def require_bootstrap(manifest_path: Path, dest: Path) -> None:
     if app_owns_infra(manifest_path, dest):
-        raise SystemExit("Infrastructure is app-owned. Edit the checked-in files or run odlc sync for rules.")
+        raise SystemExit("Infrastructure is in adoption or app-owned. Edit the checked-in files or run odlc sync for rules.")
 
 
 def phase_init_runtime(manifest_path: Path, dest: Path, overwrite: bool = False) -> None:
@@ -1845,7 +1845,7 @@ def phase_sync_infra(manifest_path: Path, dest: Path, ci_only: bool = False) -> 
         _, mapping, components = _load_and_normalize(committed_manifest)
         _, rules = selected(mapping, components)
         write_bundle(dest, rules)
-        print("Infrastructure is app-owned. Refreshed agent rules.")
+        print("Refreshed agent rules. Preserved Terraform and workflows.")
         return
     app, mapping, components = _load_and_normalize(manifest_path)
     dest.mkdir(parents=True, exist_ok=True)

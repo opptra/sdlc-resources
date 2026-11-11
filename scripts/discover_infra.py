@@ -764,8 +764,8 @@ def render_discovery_markdown(report: dict) -> str:
 def write_imports_for_manifest(manifest_path: Path, dest: Path, project_id: str | None = None) -> list[Path]:
     raw = parse(manifest_path.read_text())
     owned = dest / "service.yaml"
-    if raw.get("infra_management") == "app-owned" or (
-        owned.is_file() and parse(owned.read_text()).get("infra_management") == "app-owned"
+    if raw.get("infra_management") in ("adoption", "app-owned") or (
+        owned.is_file() and parse(owned.read_text()).get("infra_management") in ("adoption", "app-owned")
     ):
         raise SystemExit("Infrastructure is app-owned. Use discovery output to edit Terraform directly.")
     app = normalize(raw)

@@ -6,7 +6,7 @@ nav_order: 4
 
 # Infrastructure handoff and promotion
 
-Use `sync-infra` to scaffold an app. After the first local checks pass, set `infra_management: app-owned` in the root `service.yaml`. Commit it alongside the infrastructure. An omitted field means generator ownership. On an app-owned repo, `odlc sync` refreshes managed agent rules and preserves the Product contract, Terraform, workflow callers, component manifests, deployment helpers, and local build files.
+Use `sync-infra` to scaffold a new app. After the first local checks pass, set `infra_management: app-owned` in the root `service.yaml`. Commit it alongside the infrastructure. An omitted field means generator ownership. A legacy migration uses the [adoption flow below](#adopt-a-live-production-app). In `adoption` or `app-owned`, `odlc sync` refreshes managed agent rules and preserves the Product contract, Terraform, workflow callers, component manifests, deployment helpers, and local build files.
 
 | Setting | Where to look after handoff |
 |---|---|
@@ -45,6 +45,30 @@ Plan jobs use same-repository PRs, a read-only cloud identity, and no state lock
 Production blocks deletes and replacements. Staging allows switching between feature branches while protecting persistent GCP resources such as databases and buckets. For public and app-login services with a Terraform `uri` output, the default smoke test requests `/api/health`. Use `pre_apply` and `post_apply` inputs for custom release checks or an app-owned migration script. The pre-apply hook runs after image build and before applying the saved plan. A job needed by the hook must already be available. Verify any candidate traffic shift or multi-step rollout with the app's own rollout configuration before switching the legacy writer off.
 
 ## Adopt a live production app
+
+1. Compare the union of the live production inventory, the legacy deploy entry points and their scripts, and the proposed Terraform and workflow. Verify live settings with read-only access. Record gaps as unverified until they are resolved. The reviewer checks completeness and approves intentional differences.
+2. Generate initial files, set `infra_management: adoption`, then run `odlc setup-promotion service.yaml . --workflow-ref <published-sha>`. Run `odlc sync --upgrade` with the updated CLI to install the current agent rules. During adoption, sync preserves the edited Terraform and workflows while the replacement can deploy to staging. Its production jobs remain disabled. Keep the live production deploy path available during rehearsal. Retire old staging callers on the migration branch and prepare to disable the legacy production writer at cutover.
+3. Configure any production-only import inputs before the rehearsal so they are included in the reviewed tree. Push the proposed release tree to `staging`. Run the full release and verify the items in the report. Where applicable, demonstrate backup before migration, migration before deployment, and candidate health before traffic switch. Test the failure paths that should stop the switch and link the evidence. A plan or a run holding the staging image fixed is insufficient.
+4. Record the parity review and staging push run in `docs/terraform-adoption.json`. Change the marker to `app-owned` in the handoff PR. Run `odlc adoption-check --repo <owner/repository>` with GitHub Actions read access. The generated caller checks this transition and checks the first production promotion. Require the caller's adoption check for the handoff PR. The checked tree can differ from the rehearsal only in the report and the ownership marker. Later releases use ordinary CI once the target branch is app-owned.
+
+The report has a top-level `review` link, a `staging` object with integer `run_id` and full Git `commit`, and an `items` array. Cover `workloads`, `triggers`, `runtime`, `identity`, `secrets`, `data`, and `release`. Record one row per item. A category with verified absence can use `not-applicable` with evidence and a reason. Use `verified` or `intentional-difference` for covered items. Give differences and retirements a reason. Record secret references only.
+
+```json
+{
+  "category": "triggers",
+  "item": "Daily reconciliation",
+  "live": "Cloud Scheduler reconciliation-daily at 03:00 UTC",
+  "legacy": "scripts/deploy-scheduler.sh sets the target and invoker",
+  "proposed": "infra/scheduler.tf defines the trigger and its identity",
+  "status": "intentional-difference",
+  "reason": "Staging targets the test reconciliation job",
+  "disposition": "import",
+  "owner": "Terraform scheduler module",
+  "verification": "Staging run link and job invocation evidence"
+}
+```
+
+Other dispositions are `create`, `reference`, `retain-external`, and `retire`. The automated check verifies report coverage fields, the staging run, and the rehearsed tree. The migration reviewer verifies the inventory and the evidence for behavior.
 
 Inventory live resources and confirm each provider ID and Terraform address. Create what is missing in staging. Use environment-scoped import blocks for existing app-owned production resources. Reference shared databases, datasets, and secrets by ID. Preserve the existing staging state and addresses.
 
