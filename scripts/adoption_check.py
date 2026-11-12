@@ -93,11 +93,13 @@ def validate_staging(report: dict, manifest: dict, repo: str) -> None:
 
     run = github("")
     expected = {
-        "event": "push", "head_branch": "staging", "head_sha": sha,
+        "head_branch": "staging", "head_sha": sha,
         "conclusion": "success", "path": ".github/workflows/promotion.yml",
     }
-    if any(run.get(key) != value for key, value in expected.items()):
-        raise ValueError("Use a successful staging push run of promotion.yml for the recorded commit.")
+    if run.get("event") not in ("push", "workflow_dispatch") or any(
+        run.get(key) != value for key, value in expected.items()
+    ):
+        raise ValueError("Use a successful staging apply run of promotion.yml for the recorded commit.")
     jobs = github(f"/attempts/{run['run_attempt']}/jobs?per_page=100")
     applies = [
         step for job in jobs["jobs"] for step in job.get("steps", [])

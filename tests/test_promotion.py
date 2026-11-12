@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -24,6 +25,43 @@ class PromotionTests(unittest.TestCase):
             [sys.executable, str(ROOT / "scripts" / "odlc.py"), *map(str, args)],
             check=check, capture_output=True, text=True,
         )
+
+    def test_backend_selection_cannot_fall_back_to_other_environment(self):
+        workflow = (ROOT / ".github/workflows/terraform-promotion.yml").read_text()
+        backend = workflow.split("  backend:\n", 1)[1].split("\n  build:\n", 1)[0]
+        script = textwrap.dedent(backend.split("        run: |\n", 1)[1])
+        output = self.root / "outputs"
+        defaults = dict(
+            TARGET="prod", STAGING_BUCKET="stage", STAGING_PREFIX="stage-app",
+            PRODUCTION_BUCKET="production", PRODUCTION_PREFIX="prod-app",
+            GITHUB_OUTPUT=str(output),
+        )
+
+        def select(**overrides):
+            output.unlink(missing_ok=True)
+            return subprocess.run(
+                ["bash", "-c", script], env={**os.environ, **defaults, **overrides},
+                capture_output=True, text=True,
+            )
+
+        for missing in ("PRODUCTION_BUCKET", "PRODUCTION_PREFIX"):
+            with self.subTest(missing=missing):
+                result = select(**{missing: ""})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("production_bucket and production_prefix", result.stderr)
+                self.assertFalse(output.exists())
+
+        result = select(PRODUCTION_PREFIX="  ")
+        self.assertNotEqual(result.returncode, 0)
+        result = select()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(output.read_text(), "bucket=production\nprefix=prod-app\n")
+        result = select(TARGET="staging", PRODUCTION_BUCKET="")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(output.read_text(), "bucket=stage\nprefix=stage-app\n")
+        result = select(PRODUCTION_BUCKET="stage", PRODUCTION_PREFIX="stage-app")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("separate Terraform state", result.stderr)
 
     def test_handoff_preserves_deployment_files_and_blocks_bootstrap(self):
         repo = self.root / "app"
@@ -96,6 +134,8 @@ class PromotionTests(unittest.TestCase):
                   "--replace-bootstrap-workflows")
         caller = (repo / ".github/workflows/promotion.yml").read_text()
         self.assertIn("needs.adoption.outputs.production == 'true'", caller)
+        self.assertIn('staging_mode: "reviewed"', caller)
+        self.assertIn("workflow_dispatch:", caller)
 
         def git(*args):
             return subprocess.run(
@@ -147,7 +187,7 @@ class PromotionTests(unittest.TestCase):
         self.assertIn("resolve missing or unverified", check().stderr)
         rows[1]["status"] = "verified"
         write_report(rows)
-        run.write_text(json.dumps(dict(event="push", head_branch="staging", head_sha=sha,
+        run.write_text(json.dumps(dict(event="workflow_dispatch", head_branch="staging", head_sha=sha,
                                        conclusion="success", path=".github/workflows/promotion.yml",
                                        run_attempt=1)))
         steps = [dict(name="Apply reviewed plan", conclusion="success")]

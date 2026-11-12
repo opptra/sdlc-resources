@@ -56,7 +56,7 @@ def main() -> None:
     try:
         result = receipt(json.loads(args.plan.read_text()), args.tree, args.target, args.mode, args.environment)
         if args.expected and result != json.loads(args.expected.read_text()):
-            raise ValueError("Production plan differs from the reviewed PR. Review a new promotion before applying.")
+            raise ValueError("Terraform plan differs from the reviewed PR or rehearsal. Generate and review a fresh plan before applying.")
     except (KeyError, ValueError) as exc:
         parser.exit(1, f"{exc}\n")
     args.out.write_text(json.dumps(result) + "\n")
