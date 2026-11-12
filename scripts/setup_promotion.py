@@ -109,6 +109,11 @@ def setup(manifest_path: Path, dest: Path, ref: str, replace_bootstrap: bool) ->
     lines = [
         "name: Terraform promotion",
         "on:",
+        "  workflow_dispatch:",
+        "    inputs:",
+        "      reviewed_run:",
+        "        description: Reviewed plan run ID to apply. Leave blank to re-plan a production release.",
+        "        type: string",
         "  push:",
         "    branches: [staging]",
         "  pull_request:",
@@ -117,6 +122,7 @@ def setup(manifest_path: Path, dest: Path, ref: str, replace_bootstrap: bool) ->
         "permissions:",
         "  contents: read",
         "  actions: read",
+        "  pull-requests: read",
         "  id-token: write",
         "jobs:",
     ]
@@ -128,7 +134,7 @@ def setup(manifest_path: Path, dest: Path, ref: str, replace_bootstrap: bool) ->
     if adopting:
         lines.extend([
             "  adoption:",
-            "    if: github.event_name == 'pull_request'",
+            "    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/production')",
             "    runs-on: ubuntu-latest",
             "    permissions:",
             "      contents: read",
@@ -143,7 +149,7 @@ def setup(manifest_path: Path, dest: Path, ref: str, replace_bootstrap: bool) ->
             "      - id: check",
             "        env:",
             "          GH_TOKEN: ${{ github.token }}",
-            "          BASE: ${{ github.event.pull_request.base.sha }}",
+            "          BASE: ${{ github.event.pull_request.base.sha || github.sha }}",
             '        run: python3 scripts/adoption_check.py --repo "$GITHUB_REPOSITORY" --base "$BASE" >> "$GITHUB_OUTPUT"',
         ])
     for index, args in enumerate(jobs, start=1):
@@ -156,12 +162,15 @@ def setup(manifest_path: Path, dest: Path, ref: str, replace_bootstrap: bool) ->
         ])
         if adopting:
             lines.extend([
-                "        && (github.event_name == 'push' || (needs.adoption.result == 'success' &&",
-                "          (github.base_ref != 'production' || needs.adoption.outputs.production == 'true')))",
+                "        && (github.ref == 'refs/heads/staging' || (needs.adoption.result == 'success' &&",
+                "          ((github.base_ref != 'production' && github.ref != 'refs/heads/production') || needs.adoption.outputs.production == 'true')))",
             ])
         lines[-1] += " }}"
         lines.append(f"    uses: {mapping['repo']}/.github/workflows/terraform-promotion.yml@{ref}")
         lines.append("    with:")
+        lines.append("      reviewed_run: ${{ inputs.reviewed_run || '' }}")
+        if adopting:
+            lines.append('      staging_mode: "reviewed"')
         lines.extend(f"      {name}: {json.dumps(value)}" for name, value in args.items())
 
     workflows.mkdir(parents=True, exist_ok=True)

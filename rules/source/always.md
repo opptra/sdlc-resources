@@ -2,7 +2,7 @@ Read the root `service.yaml` and the Product contract in `AGENTS.md`. Check `inf
 
 main is the default branch. Cut feature branches from main. Open the pull request into main. Merging to main does not deploy.
 
-A direct push to staging deploys the staging project. Any developer may push there. Do not merge main into staging to release. Merging to main does not deploy. A pull request from main into production is the only promotion from main, and that merge deploys prod_project.
+A push to staging starts the staging workflow. In reviewed mode, inspect the plan before dispatching the staging apply with the reviewed run ID. In app-owned promotion, PRs into main validate Terraform with the backend disabled. A PR from main into production reviews the production image digests and plan. The merge deploys those digests if the fresh plan matches. Routine production releases use production inputs and run independently of staging.
 
 Do not add deploy.sh. Do not run gcloud run deploy. Do not commit a .env or a credential. Do not tag an image latest. Do not log secret values, bearer tokens, signed download URLs, or customer PII (email bodies, invoice text, phone numbers). Log ticket or record IDs, run IDs, and exit codes.
 

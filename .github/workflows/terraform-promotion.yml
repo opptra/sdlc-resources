@@ -43,6 +43,18 @@ on:
         description: Exact live image reference for an import-only production run
         type: string
         default: ""
+      staging_mode:
+        description: auto applies on push, reviewed publishes a plan for explicit apply
+        type: string
+        default: auto
+      reviewed_run:
+        description: Successful staging or production recovery plan run ID
+        type: string
+        default: ""
+      migrate:
+        description: Optional app script that runs and waits for migrations with RELEASE_IMAGE
+        type: string
+        default: ""
       pre_apply:
         description: Optional reviewed script run after checks and image build, before the release apply
         type: string
@@ -55,44 +67,168 @@ on:
 permissions:
   contents: read
   actions: read
+  pull-requests: read
   id-token: write
 
 jobs:
-  terraform:
+  validate:
+    if: github.event_name == 'pull_request' && github.base_ref == 'main' && github.event.action != 'closed'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.component }}/infra
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.5"
+          terraform_wrapper: false
+      - run: |
+          terraform fmt -check -recursive
+          terraform init -input=false -backend=false
+          terraform validate
+
+  backend:
     if: >-
       (github.event_name == 'push' && github.ref == 'refs/heads/staging') ||
-      (github.event_name == 'pull_request' &&
+       (github.event_name == 'workflow_dispatch' &&
+        (github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/production')) ||
+       (github.event_name == 'pull_request' && github.base_ref == 'production' && github.head_ref == 'main' &&
         github.event.pull_request.head.repo.full_name == github.repository &&
-        (github.event.action != 'closed' || (github.event.pull_request.merged &&
-          github.base_ref == 'production' && github.head_ref == 'main' &&
-          github.ref == 'refs/heads/production')))
+        (github.event.action != 'closed' ||
+         (github.event.pull_request.merged && github.ref == 'refs/heads/production')))
+    permissions: {}
+    runs-on: ubuntu-latest
+    outputs:
+      bucket: ${{ steps.select.outputs.bucket }}
+      prefix: ${{ steps.select.outputs.prefix }}
+    steps:
+      - id: select
+        env:
+          TARGET: ${{ (github.base_ref == 'production' || github.ref == 'refs/heads/production') && 'prod' || 'staging' }}
+          STAGING_BUCKET: ${{ inputs.staging_bucket }}
+          STAGING_PREFIX: ${{ inputs.staging_prefix }}
+          PRODUCTION_BUCKET: ${{ inputs.production_bucket }}
+          PRODUCTION_PREFIX: ${{ inputs.production_prefix }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == prod ]]; then
+            bucket=$PRODUCTION_BUCKET
+            prefix=$PRODUCTION_PREFIX
+            input_prefix=production
+          else
+            bucket=$STAGING_BUCKET
+            prefix=$STAGING_PREFIX
+            input_prefix=staging
+          fi
+          if [[ -z "${bucket//[[:space:]]/}" || -z "${prefix//[[:space:]]/}" ]]; then
+            echo "Set ${input_prefix}_bucket and ${input_prefix}_prefix in the workflow caller." >&2
+            exit 1
+          fi
+          if [[ "$STAGING_BUCKET/$STAGING_PREFIX" == "$PRODUCTION_BUCKET/$PRODUCTION_PREFIX" ]]; then
+            echo 'Staging and production must have separate Terraform state.' >&2
+            exit 1
+          fi
+          printf 'bucket=%s\nprefix=%s\n' "$bucket" "$prefix" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: backend
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/staging' && inputs.staging_adoption_image == '') ||
+      (github.event_name == 'pull_request' && github.event.action != 'closed' &&
+        github.base_ref == 'production' && github.head_ref == 'main' &&
+        github.event.pull_request.head.repo.full_name == github.repository && inputs.adoption_image == '')
+    runs-on: ubuntu-latest
+    environment: ${{ github.base_ref == 'production' && 'production-build' || 'staging-build' }}
+    outputs:
+      image: ${{ steps.build.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - id: build
+        env:
+          COMPONENT: ${{ inputs.component }}
+          MANIFEST: ${{ inputs.manifest }}
+          TARGET: ${{ github.base_ref == 'production' && 'prod' || 'staging' }}
+          STAGING_PROJECT: ${{ inputs.staging_project }}
+          ARTIFACT_REPO: ${{ inputs.artifact_repo }}
+          BUILD_CONTEXT: ${{ inputs.docker_context }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
+        run: |
+          set -euo pipefail
+          tree=$(git rev-parse HEAD^{tree})
+          python3 scripts/render_tfvars.py --manifest "$MANIFEST" --environment "$TARGET" \
+            --staging-project "$STAGING_PROJECT" --artifact-repo "$ARTIFACT_REPO" \
+            --sha "$tree" --out "$RUNNER_TEMP/build.tfvars.json"
+          image=$(jq -er .image "$RUNNER_TEMP/build.tfvars.json")
+          project=$(jq -er .project_id "$RUNNER_TEMP/build.tfvars.json")
+          region=$(jq -er .region "$RUNNER_TEMP/build.tfvars.json")
+          immutable=$(gcloud artifacts repositories describe "$ARTIFACT_REPO" --project "$project" \
+            --location "$region" --format='value(dockerConfig.immutableTags)')
+          [[ "${immutable,,}" == true ]] || { echo 'Enable immutable registry tags.' >&2; exit 1; }
+          gcloud auth configure-docker "$region-docker.pkg.dev" --quiet
+          if ! docker buildx imagetools inspect "$image" >/dev/null 2>&1; then
+            source_dir=$(mktemp -d "$RUNNER_TEMP/image-source.XXXXXX")
+            git archive HEAD | tar -x -C "$source_dir"
+            context=$(realpath "$source_dir/${BUILD_CONTEXT:-$COMPONENT}")
+            dockerfile=$(realpath "$source_dir/${DOCKERFILE:-$COMPONENT/Dockerfile}")
+            [[ "$context" == "$source_dir" || "$context" == "$source_dir/"* ]]
+            [[ "$dockerfile" == "$context/"* ]]
+            docker build --file "$dockerfile" --tag "$image" "$context"
+            # A concurrent build may publish the same immutable tag first.
+            docker push "$image" || docker buildx imagetools inspect "$image" >/dev/null
+          fi
+          digest=$(docker buildx imagetools inspect "$image" --format '{{json .Manifest}}' | jq -er .digest)
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          echo "image=${image%:*}@$digest" >> "$GITHUB_OUTPUT"
+
+  terraform:
+    needs: [backend, build]
+    if: >-
+      always() && !cancelled() && (needs.build.result == 'success' || needs.build.result == 'skipped') &&
+      needs.backend.result == 'success'
     runs-on: ubuntu-latest
     environment: >-
-      ${{ github.event_name == 'push' && 'staging' ||
+      ${{ (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/production' &&
+          inputs.reviewed_run != '' && 'production-recovery') ||
           (github.event.action == 'closed' && 'production') ||
-          (github.base_ref == 'production' && 'production-plan') || 'staging-plan' }}
+          (github.base_ref == 'production' || github.ref == 'refs/heads/production') && 'production-plan' ||
+          ((github.event_name == 'push' && inputs.staging_mode == 'auto') || github.event.action == 'closed' || (github.event_name == 'workflow_dispatch' && inputs.reviewed_run != '')) && 'staging' || 'staging-plan' }}
     concurrency:
-      group: ${{ github.event_name == 'push' && 'terraform-staging' || github.event.action == 'closed' && 'terraform-production' || format('terraform-preview-{0}', github.run_id) }}-${{ inputs.component }}
+      group: >-
+        ${{ (github.event.action == 'closed' || (github.event_name == 'workflow_dispatch' && inputs.reviewed_run != '')) &&
+          ((github.base_ref == 'production' || github.ref == 'refs/heads/production') && 'terraform-production' || 'terraform-staging') ||
+          (github.event_name == 'push' && inputs.staging_mode == 'auto' && 'terraform-staging') ||
+          format('terraform-preview-{0}', github.run_id) }}-${{ inputs.component }}
       cancel-in-progress: false
     env:
       COMPONENT: ${{ inputs.component }}
       MANIFEST: ${{ inputs.manifest }}
-      TARGET: ${{ github.base_ref == 'production' && 'prod' || 'staging' }}
-      APPLY: ${{ github.event_name == 'push' || github.event.action == 'closed' }}
-      BUCKET: ${{ github.base_ref == 'production' && inputs.production_bucket || inputs.staging_bucket }}
-      STAGING_STATE: ${{ format('{0}/{1}', inputs.staging_bucket, inputs.staging_prefix) }}
-      PRODUCTION_STATE: ${{ format('{0}/{1}', inputs.production_bucket, inputs.production_prefix) }}
-      PREFIX: ${{ github.base_ref == 'production' && inputs.production_prefix || inputs.staging_prefix }}
+      TARGET: ${{ (github.base_ref == 'production' || github.ref == 'refs/heads/production') && 'prod' || 'staging' }}
+      APPLY: ${{ ((github.event_name == 'push' && inputs.staging_mode == 'auto') || github.event.action == 'closed' || (github.event_name == 'workflow_dispatch' && inputs.reviewed_run != '')) }}
+      BUCKET: ${{ needs.backend.outputs.bucket }}
+      PREFIX: ${{ needs.backend.outputs.prefix }}
       STAGING_PROJECT: ${{ inputs.staging_project }}
       ARTIFACT_REPO: ${{ inputs.artifact_repo }}
       STAGING_ADOPTION_IMAGE: ${{ inputs.staging_adoption_image }}
       PRODUCTION_ADOPTION_IMAGE: ${{ inputs.adoption_image }}
-      BUILD_CONTEXT: ${{ inputs.docker_context }}
-      DOCKERFILE: ${{ inputs.dockerfile }}
+      STAGING_MODE: ${{ inputs.staging_mode }}
+      REVIEWED_RUN: ${{ inputs.reviewed_run }}
+      BUILT_IMAGE: ${{ needs.build.outputs.image }}
       GH_TOKEN: ${{ github.token }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
-      PR_SOURCE_BRANCH: ${{ github.head_ref }}
       PR_HEAD: ${{ github.event.pull_request.head.sha }}
+      PR_MERGED_AT: ${{ github.event.pull_request.merged_at }}
       TF_IN_AUTOMATION: "true"
     steps:
       - uses: actions/checkout@v4
@@ -103,16 +239,16 @@ jobs:
         id: release
         run: |
           set -euo pipefail
-          if [[ "$TARGET" == prod && "$PR_SOURCE_BRANCH" != main ]]; then
-            echo 'Promote from main into production.' >&2
-            exit 1
+          [[ "$STAGING_MODE" == auto || "$STAGING_MODE" == reviewed ]]
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$TARGET" == prod && "$APPLY" == true ]]; then
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/approvals" |
+              jq -e 'any(.[]; .state == "approved" and any(.environments[]; .name == "production-recovery"))' >/dev/null || {
+                echo 'Production recovery requires reviewer approval on the production-recovery environment.' >&2
+                exit 1
+              }
           fi
-          if [[ "$STAGING_STATE" == "$PRODUCTION_STATE" ]]; then
-            echo 'Staging and production must have separate Terraform state.' >&2
-            exit 1
-          fi
-          if [[ -z "$BUCKET" || -z "$PREFIX" ]]; then
-            echo 'Specify the existing or new Terraform backend bucket and prefix explicitly.' >&2
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$TARGET" == staging && -z "$REVIEWED_RUN" ]]; then
+            echo 'Push to staging for a plan, then dispatch with its reviewed run ID.' >&2
             exit 1
           fi
           cd "$GITHUB_WORKSPACE"
@@ -135,18 +271,18 @@ jobs:
           if [[ -n "$adoption_image" ]]; then
             mode=adopt
           fi
-          if [[ "$mode" == release ]]; then
-            context=$(realpath "${BUILD_CONTEXT:-$COMPONENT}")
-            dockerfile=$(realpath "${DOCKERFILE:-$COMPONENT/Dockerfile}")
-            [[ -d "$context" && -f "$dockerfile" ]]
-            [[ "$context" == "$GITHUB_WORKSPACE" || "$context" == "$GITHUB_WORKSPACE/"* ]]
-            [[ "$dockerfile" == "$context/"* ]]
+          artifact="terraform-review-$PR_NUMBER-$key"
+          if [[ "$TARGET" == staging ]]; then
+            artifact="terraform-staging-$key"
+          elif [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            artifact="terraform-recovery-$key"
           fi
           {
             echo "infra=$infra"
             echo "tree=$tree"
             echo "mode=$mode"
-            echo "artifact=terraform-review-$PR_NUMBER-$key"
+            echo "artifact=$artifact"
+            echo "key=$key"
           } >> "$GITHUB_OUTPUT"
           python3 scripts/render_tfvars.py --manifest "$manifest" --environment "$TARGET" \
             --staging-project "$STAGING_PROJECT" --artifact-repo "$ARTIFACT_REPO" \
@@ -156,25 +292,82 @@ jobs:
               > "$RUNNER_TEMP/adopt.tfvars.json"
             mv "$RUNNER_TEMP/adopt.tfvars.json" "$RUNNER_TEMP/release.tfvars.json"
           fi
-      - name: Find successful plan for this pull request
-        if: env.APPLY == 'true' && env.TARGET == 'prod'
+      - name: Resolve reviewed image and plan
         env:
           ARTIFACT: ${{ steps.release.outputs.artifact }}
+          COMPONENT_KEY: ${{ steps.release.outputs.key }}
+          TREE: ${{ steps.release.outputs.tree }}
+          MODE: ${{ steps.release.outputs.mode }}
+          IMAGE_TAG: ${{ steps.release.outputs.image }}
         run: |
           set -euo pipefail
           workflow_ref=${GITHUB_WORKFLOW_REF%@*}
-          workflow=${workflow_ref##*/}
-          run_ids=$(gh api --paginate --method GET \
-            "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs" \
-            -f event=pull_request -f status=success -f head_sha="$PR_HEAD" \
-            --jq '.workflow_runs[].id')
-          for run_id in $run_ids; do
-            if gh run download "$run_id" --name "$ARTIFACT" --dir "$RUNNER_TEMP/review"; then
-              exit 0
+          workflow_path=${workflow_ref#"$GITHUB_REPOSITORY/"}
+          workflow=${workflow_path##*/}
+          review_dir="$RUNNER_TEMP/review"
+          image=$BUILT_IMAGE
+
+          if [[ -n "$REVIEWED_RUN" ]]; then
+            [[ "$REVIEWED_RUN" =~ ^[0-9]+$ && "$GITHUB_EVENT_NAME" == workflow_dispatch ]]
+            event=push
+            branch=staging
+            if [[ "$TARGET" == prod ]]; then
+              event=workflow_dispatch
+              branch=production
             fi
-          done
-          echo 'No successful production plan receipt found for this pull request.' >&2
-          exit 1
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$REVIEWED_RUN" |
+              jq -e --arg path "$workflow_path" --arg event "$event" --arg branch "$branch" --arg sha "$GITHUB_SHA" \
+                '.path == $path and .event == $event and .head_branch == $branch and .head_sha == $sha and .conclusion == "success"'
+            gh run download "$REVIEWED_RUN" --name "$ARTIFACT" --dir "$review_dir"
+          elif [[ "$TARGET" == prod && ( "$APPLY" == true || "$GITHUB_EVENT_NAME" == workflow_dispatch ) ]]; then
+            if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+              pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" | jq -cer --arg sha "$GITHUB_SHA" \
+                '[.[] | select(.merge_commit_sha == $sha and .merged_at and .base.ref == "production" and .head.ref == "main")] | first')
+              PR_NUMBER=$(jq -er .number <<<"$pr")
+              PR_HEAD=$(jq -er .head.sha <<<"$pr")
+              PR_MERGED_AT=$(jq -er .merged_at <<<"$pr")
+            fi
+            run_ids=$(gh api --paginate --method GET \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs" \
+              -f event=pull_request -f status=success -f head_sha="$PR_HEAD" \
+              --jq '.workflow_runs[].id')
+            for run_id in $run_ids; do
+              if gh run download "$run_id" --name "terraform-review-$PR_NUMBER-$COMPONENT_KEY" --dir "$review_dir"; then
+                break
+              fi
+            done
+            [[ -f "$review_dir/receipt.json" ]] || {
+              echo 'No successful production plan receipt found.' >&2
+              exit 1
+            }
+            plan_ready=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq .updated_at)
+            gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" |
+              jq -e --arg head "$PR_HEAD" --arg ready "$plan_ready" --arg merged "$PR_MERGED_AT" '
+                add | map(select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")) |
+                group_by(.user.id) | map(max_by(.id)) |
+                any(.[]; .state == "APPROVED" and .commit_id == $head and
+                    .submitted_at >= $ready and .submitted_at <= $merged)
+              ' >/dev/null || {
+                echo 'The selected production plan needs a PR approval after it completes and before merge.' >&2
+                exit 1
+              }
+          fi
+
+          if [[ -d "$review_dir" ]]; then
+            jq -e --arg tree "$TREE" --arg target "$BUCKET/$PREFIX" --arg mode "$MODE" \
+              '.tree == $tree and .target == $target and .mode == $mode' "$review_dir/receipt.json" >/dev/null
+            image=$(jq -er .image "$review_dir/image.json")
+          fi
+          tfvars="$RUNNER_TEMP/release.tfvars.json"
+          if [[ "$MODE" == release ]]; then
+            [[ "$image" == "${IMAGE_TAG%:*}@"* ]]
+            [[ "${image##*@}" =~ ^sha256:[a-f0-9]{64}$ ]]
+            jq --arg image "$image" '.image = $image' "$tfvars" > "$RUNNER_TEMP/image.tfvars.json"
+            mv "$RUNNER_TEMP/image.tfvars.json" "$tfvars"
+          elif [[ -n "$image" ]]; then
+            [[ "$image" == "$(jq -er .image "$tfvars")" ]]
+          fi
+          jq '{image}' "$tfvars" > "$RUNNER_TEMP/image.json"
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -213,9 +406,7 @@ jobs:
           fi
           lock=(-lock-timeout=120s)
           expected=()
-          if [[ "$APPLY" == false ]]; then
-            lock=(-lock=false)
-          elif [[ "$TARGET" == prod ]]; then
+          if [[ "$APPLY" == true && ( "$TARGET" == prod || -n "$REVIEWED_RUN" ) ]]; then
             expected=(--expected "$RUNNER_TEMP/review/receipt.json")
           fi
           terraform plan -input=false -no-color "${lock[@]}" "${vars[@]}" \
@@ -228,6 +419,7 @@ jobs:
           fi
           {
             echo "### Terraform plan for $TARGET"
+            printf 'Candidate image: `%s`\n\n' "$(jq -er .image "$RUNNER_TEMP/image.json")"
             echo '~~~text'
             cat "$RUNNER_TEMP/plan.txt"
             echo '~~~'
@@ -237,10 +429,12 @@ jobs:
             --tree "$TREE" --environment "$TARGET" --target "$BUCKET/$PREFIX" --mode "$MODE" \
             --out "$RUNNER_TEMP/receipt.json" "${expected[@]}"
       - uses: actions/upload-artifact@v4
-        if: env.APPLY == 'false' && env.TARGET == 'prod'
+        if: env.APPLY == 'false'
         with:
           name: ${{ steps.release.outputs.artifact }}
-          path: ${{ runner.temp }}/receipt.json
+          path: |
+            ${{ runner.temp }}/receipt.json
+            ${{ runner.temp }}/image.json
           if-no-files-found: error
       - name: Verify release is current
         if: env.APPLY == 'true'
@@ -254,39 +448,14 @@ jobs:
             exit 1
           }
       - uses: google-github-actions/setup-gcloud@v2
-        if: env.APPLY == 'true' && steps.release.outputs.mode == 'release'
-      - name: Build or reuse the immutable release image
-        if: env.APPLY == 'true' && steps.release.outputs.mode == 'release'
-        env:
-          IMAGE: ${{ steps.release.outputs.image }}
-          PROJECT: ${{ steps.release.outputs.project_id }}
-          REGION: ${{ steps.release.outputs.region }}
-        run: |
-          set -euo pipefail
-          immutable=$(gcloud artifacts repositories describe "$ARTIFACT_REPO" --project "$PROJECT" \
-            --location "$REGION" --format='value(dockerConfig.immutableTags)')
-          if [[ "${immutable,,}" != true ]]; then
-            echo 'The release image repository must enforce immutable tags.' >&2
-            exit 1
-          fi
-          gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
-          if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
-            exit 0
-          fi
-          source_dir=$(mktemp -d "$RUNNER_TEMP/image-source.XXXXXX")
-          git archive HEAD | tar -x -C "$source_dir"
-          context=$(realpath "$source_dir/${BUILD_CONTEXT:-$COMPONENT}")
-          dockerfile=$(realpath "$source_dir/${DOCKERFILE:-$COMPONENT/Dockerfile}")
-          [[ "$context" == "$source_dir" || "$context" == "$source_dir/"* ]]
-          [[ "$dockerfile" == "$context/"* ]]
-          docker build --file "$dockerfile" --tag "$IMAGE" "$context"
-          docker push "$IMAGE"
+        if: env.APPLY == 'true' && (inputs.pre_apply != '' || inputs.migrate != '' || inputs.post_apply != '')
       - name: Apply reviewed plan
         if: env.APPLY == 'true'
         working-directory: ${{ steps.release.outputs.infra }}
         env:
           MODE: ${{ steps.release.outputs.mode }}
           PRE_APPLY: ${{ inputs.pre_apply }}
+          MIGRATE: ${{ inputs.migrate }}
           POST_APPLY: ${{ inputs.post_apply }}
           AUTH: ${{ steps.release.outputs.auth }}
         run: |
@@ -301,8 +470,15 @@ jobs:
           [[ "$TARGET" != prod ]] || branch=production
           current=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$branch" --jq .object.sha)
           [[ "$current" == "$(git rev-parse HEAD)" ]]
-          if [[ "$MODE" == release && -n "$PRE_APPLY" ]]; then
-            run_hook "$PRE_APPLY"
+          export RELEASE_IMAGE
+          RELEASE_IMAGE=$(jq -er .image "$RUNNER_TEMP/image.json")
+          if [[ "$MODE" == release ]]; then
+            if [[ -n "$PRE_APPLY" ]]; then
+              run_hook "$PRE_APPLY"
+            fi
+            if [[ -n "$MIGRATE" ]]; then
+              run_hook "$MIGRATE"
+            fi
           fi
           terraform apply -input=false -lock-timeout=120s "$RUNNER_TEMP/release.tfplan"
           if [[ -n "$POST_APPLY" ]]; then
