@@ -26,6 +26,44 @@ class PromotionTests(unittest.TestCase):
             check=check, capture_output=True, text=True,
         )
 
+    @unittest.skipUnless(shutil.which("jq") and shutil.which("unzip"), "requires jq and unzip")
+    def test_reviewed_dispatch_downloads_selected_artifact_by_id(self):
+        import zipfile
+
+        workflow = (ROOT / ".github/workflows/terraform-promotion.yml").read_text()
+        step = workflow.split("      - name: Resolve reviewed image and plan", 1)[1]
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1].split("      - name:", 1)[0])
+        runner = self.root
+        image = "example/release@" + "sha256:" + "a" * 64
+        (runner / "release.tfvars.json").write_text(json.dumps({"image": "example/release:tree"}))
+        with zipfile.ZipFile(runner / "artifact.zip", "w") as archive:
+            archive.writestr("receipt.json", json.dumps({"tree": "tree", "target": "bucket/app", "mode": "release"}))
+            archive.writestr("image.json", json.dumps({"image": image}))
+        gh = runner / "gh"
+        gh.write_text("""#!/bin/bash
+case "$2" in
+  */artifacts/123) echo '{"name":"terraform-staging-component-42-1","workflow_run":{"id":42},"expired":false}' ;;
+  */artifacts/124) echo '{"name":"terraform-staging-component-42-2","workflow_run":{"id":42},"expired":false}' ;;
+  */runs/42/attempts/1) echo '{"path":".github/workflows/promotion.yml","event":"push","head_branch":"staging","head_sha":"abc","conclusion":"success"}' ;;
+  */artifacts/123/zip) cat "$RUNNER_TEMP/artifact.zip" ;;
+  *) exit 1 ;;
+esac
+""")
+        gh.chmod(0o755)
+        env = dict(os.environ, PATH=f"{runner}:{os.environ['PATH']}", RUNNER_TEMP=str(runner),
+                   GITHUB_WORKFLOW_REF="org/app/.github/workflows/promotion.yml@refs/heads/staging",
+                   GITHUB_REPOSITORY="org/app", GITHUB_EVENT_NAME="workflow_dispatch", GITHUB_SHA="abc",
+                   BUILT_IMAGE="", REVIEWED_RUN="42", REVIEWED_ARTIFACTS="123", TARGET="staging",
+                   ARTIFACT="terraform-staging-component", TREE="tree", BUCKET="bucket", PREFIX="app",
+                   MODE="release", IMAGE_TAG="example/release:tree")
+        valid = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True)
+        self.assertEqual(valid.returncode, 0, valid.stderr)
+        self.assertEqual(json.loads((runner / "image.json").read_text())["image"], image)
+        ambiguous = subprocess.run(["bash", "-c", script], env=env | {"REVIEWED_ARTIFACTS": "123 124"},
+                                   capture_output=True, text=True)
+        self.assertNotEqual(ambiguous.returncode, 0)
+        self.assertIn("Select exactly one", ambiguous.stderr)
+
     def test_backend_selection_cannot_fall_back_to_other_environment(self):
         workflow = (ROOT / ".github/workflows/terraform-promotion.yml").read_text()
         backend = workflow.split("  backend:\n", 1)[1].split("\n  build:\n", 1)[0]
@@ -123,6 +161,111 @@ class PromotionTests(unittest.TestCase):
         self.assertIn('staging_bucket: "opptra-staging-tfstate"', caller)
         self.assertIn('production_bucket: "opptra-applications-tfstate"', caller)
         self.assertNotEqual(self.odlc(*args, check=False).returncode, 0)
+
+    def test_iam_setup_wires_one_gate_for_all_components(self):
+        repo = self.root / "app"
+        self.odlc("all", FIXTURE, repo)
+        manifest = repo / "service.yaml"
+        manifest.write_text(manifest.read_text() + "\ninfra_management: app-owned\n")
+        self.odlc("setup-promotion", manifest, repo, "--workflow-ref", "a" * 40,
+                  "--replace-bootstrap-workflows", "--with-iam")
+        caller = (repo / ".github/workflows/promotion.yml").read_text()
+        self.assertEqual(caller.count("terraform-iam.yml@" + "a" * 40), 2)
+        self.assertEqual(caller.count("needs: [ci, iam-ready]"), 2)
+        self.assertIn("fingerprint: ${{ needs.iam-plan.outputs.fingerprint }}", caller)
+        self.assertEqual(json.loads((repo / "infra/iam/production.json").read_text()), {})
+        self.assertEqual(json.loads((repo / "infra/iam/staging.json").read_text()), {})
+        self.assertTrue((repo / "scripts/bind-iam.sh").exists())
+        for phase in ("staging", "production"):
+            help_text = subprocess.check_output(["bash", str(repo / f"scripts/bind-{phase}.sh"), "--help"],
+                                                text=True)
+            self.assertIn("--with-iam", help_text)
+            self.assertIn("IAM_GRANT_ROLES", help_text)
+
+    @unittest.skipUnless(shutil.which("jq"), "requires jq")
+    def test_iam_workflow_reads_only_delegated_grant_data(self):
+        workflow = (ROOT / ".github/workflows/terraform-iam.yml").read_text()
+        step = workflow.split("      - name: Read declarations and prepare Terraform", 1)[1]
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1].split("      - uses:", 1)[0])
+        gh = self.root / "gh"
+        gh.write_text('#!/bin/bash\ncat "$GRANT_FIXTURE"\n')
+        gh.chmod(0o755)
+        declaration = self.root / "fixture.json"
+        member = "serviceAccount:planner@example-project.iam.gserviceaccount.com"
+        grant = {"member": member, "role": "roles/pubsub.viewer", "adopt": True}
+        env = dict(os.environ, PATH=f"{self.root}:{os.environ['PATH']}", SOURCE_SHA="f" * 40,
+                   GITHUB_REPOSITORY="org/app", TARGET="staging", PROJECT="example-project",
+                   BUCKET="example-state", ROLES='["roles/pubsub.viewer"]', MEMBERS=json.dumps([member]),
+                   GRANT_FIXTURE=str(declaration))
+        for label, grants, expected in [
+            ("empty", {}, 0),
+            ("adopt", {"existing": grant}, 0),
+            ("outside-scope", {"grant": grant | {"role": "roles/owner"}}, 1),
+            ("unknown-member", {"grant": grant | {"member": "user:someone@example.com"}}, 1),
+            ("duplicate", {"first": grant, "second": grant}, 1),
+        ]:
+            with self.subTest(label=label):
+                temp = self.root / label
+                temp.mkdir()
+                declaration.write_text(json.dumps(grants))
+                result = subprocess.run(["bash", "-c", script], env=env | {"RUNNER_TEMP": str(temp)},
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, expected, result.stderr)
+                if expected == 0:
+                    tfvars = json.loads((temp / "iam/terraform.tfvars.json").read_text())
+                    self.assertEqual(tfvars, {"project": "example-project", "grants": grants})
+
+    @unittest.skipUnless(shutil.which("jq"), "requires jq")
+    def test_iam_apply_rechecks_the_preview_before_writing(self):
+        workflow = (ROOT / ".github/workflows/terraform-iam.yml").read_text()
+        step = workflow.split("      - name: Plan or apply reviewed grants", 1)[1]
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+        terraform = self.root / "terraform"
+        terraform.write_text("""#!/bin/bash
+case "$1" in
+  init) exit 0 ;;
+  plan) exit 2 ;;
+  show) cat "$FIXTURE_PLAN" ;;
+  apply) touch applied ;;
+  *) exit 1 ;;
+esac
+""")
+        terraform.chmod(0o755)
+        gh = self.root / "gh"
+        gh.write_text('#!/bin/bash\nprintf "%s\\n" "$GITHUB_SHA"\n')
+        gh.chmod(0o755)
+        member = "serviceAccount:planner@example-project.iam.gserviceaccount.com"
+        plan = self.root / "fixture.json"
+        plan.write_text(json.dumps({
+            "terraform_version": "1.10.5",
+            "resource_changes": [{
+                "mode": "managed",
+                "type": "google_project_iam_member",
+                "change": {"actions": ["create"], "before": None,
+                           "after": {"project": "example-project", "member": member, "role": "roles/pubsub.viewer"}},
+            }],
+        }))
+        output = self.root / "outputs"
+        env = dict(os.environ, PATH=f"{self.root}:{os.environ['PATH']}", FIXTURE_PLAN=str(plan),
+                   TARGET="staging", PROJECT="example-project", BUCKET="example-state",
+                   ROLES='["roles/pubsub.viewer"]', MEMBERS=json.dumps([member]), APPLY="false",
+                   SOURCE_SHA="a" * 40, GITHUB_SHA="a" * 40, GITHUB_REPOSITORY="org/app",
+                   GITHUB_OUTPUT=str(output), GITHUB_STEP_SUMMARY=str(self.root / "summary"))
+
+        def run(**overrides):
+            return subprocess.run(["bash", "-c", script], env=env | overrides, cwd=self.root,
+                                  capture_output=True, text=True)
+
+        preview = run()
+        self.assertEqual(preview.returncode, 0, preview.stderr)
+        self.assertIn("pending=true", output.read_text())
+        fingerprint = output.read_text().splitlines()[0].split("=", 1)[1]
+        stale = run(APPLY="true", EXPECTED=fingerprint, SOURCE_SHA="b" * 40)
+        self.assertIn("IAM plan changed", stale.stderr)
+        self.assertFalse((self.root / "applied").exists())
+        applied = run(APPLY="true", EXPECTED=fingerprint)
+        self.assertEqual(applied.returncode, 0, applied.stderr)
+        self.assertTrue((self.root / "applied").exists())
 
     def test_adoption_gates_handoff_but_not_routine_changes(self):
         repo = self.root / "app"

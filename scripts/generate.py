@@ -1711,6 +1711,9 @@ PROD_PROJECT="${{2:-{prod}}}"
 """,
         dest,
     )
+    helper = dest / "scripts" / "bind-iam.sh"
+    helper.write_bytes((ROOT / "scripts" / "bind-iam.sh").read_bytes())
+    helper.chmod(0o755)
 
 
 def openspec_pin() -> str:

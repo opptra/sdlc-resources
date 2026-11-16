@@ -6,6 +6,17 @@
 
 set -euo pipefail
 
+if [[ "${1:-}" == --help ]]; then
+  echo "Usage: $(basename "$0") [--with-iam] <org/repo>"
+  bash "$(dirname "$0")/bind-iam.sh" --help
+  exit 0
+fi
+iam_only=false
+if [[ "${1:-}" == --with-iam ]]; then
+  iam_only=true
+  shift
+fi
+
 if [[ $# -ne 1 ]]; then
   echo "usage: scripts/bind-staging.sh <org/repo>" >&2
   exit 2
@@ -31,10 +42,6 @@ if [[ "$STAGING_PROJECT" == "$CI_PROJECT" ]]; then
   exit 2
 fi
 
-if [[ ! "$ACCOUNT" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]]; then
-  echo "service account id ${ACCOUNT} must be 6 to 30 characters. Shorten the GitHub repository name." >&2
-  exit 2
-fi
 
 if ! gcloud projects describe "$STAGING_PROJECT" >/dev/null 2>&1; then
   echo "staging project ${STAGING_PROJECT} does not exist yet. Follow docs/gcp-bootstrap.md." >&2
@@ -45,6 +52,16 @@ if ! gcloud iam workload-identity-pools describe "$POOL" \
   --project="$CI_PROJECT" --location=global >/dev/null 2>&1; then
   echo "workload identity pool ${POOL} is missing in ${CI_PROJECT}, or this account cannot read it." >&2
   exit 1
+fi
+
+if [[ "$iam_only" == true ]]; then
+  exec bash "$(dirname "$0")/bind-iam.sh" "$REPO" "$STAGING_PROJECT" "$ENVIRONMENT" \
+    "$CI_PROJECT" "$POOL" "$PROVIDER"
+fi
+
+if [[ ! "$ACCOUNT" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]]; then
+  echo "service account id ${ACCOUNT} must be 6 to 30 characters. Shorten the GitHub repository name." >&2
+  exit 2
 fi
 
 CI_NUMBER="$(gcloud projects describe "$CI_PROJECT" --format='value(projectNumber)')"

@@ -1,0 +1,209 @@
+name: Terraform deployment grants
+
+on:
+  workflow_call:
+    inputs:
+      iam_pr:
+        description: Open main-to-production PR number for a production IAM dispatch
+        type: string
+        default: ""
+      apply:
+        description: Apply the plan reviewed earlier in this dispatch
+        type: boolean
+        default: false
+      fingerprint:
+        description: Expected plan fingerprint from the preview in this dispatch
+        type: string
+        default: ""
+    outputs:
+      fingerprint:
+        value: ${{ jobs.iam.outputs.fingerprint }}
+      pending:
+        value: ${{ jobs.iam.outputs.pending }}
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: read
+  id-token: write
+
+jobs:
+  iam:
+    runs-on: ubuntu-latest
+    environment: ${{ format('{0}-iam-{1}', (github.base_ref == 'production' || github.ref == 'refs/heads/production') && 'production' || 'staging', inputs.apply && 'apply' || 'plan') }}
+    outputs:
+      fingerprint: ${{ steps.terraform.outputs.fingerprint }}
+      pending: ${{ steps.terraform.outputs.pending }}
+    concurrency:
+      group: ${{ inputs.apply && format('deployment-iam-{0}', github.ref) || format('deployment-iam-preview-{0}', github.run_id) }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TARGET: ${{ (github.base_ref == 'production' || github.ref == 'refs/heads/production') && 'production' || 'staging' }}
+      IAM_PR: ${{ inputs.iam_pr }}
+      APPLY: ${{ inputs.apply }}
+      EXPECTED: ${{ inputs.fingerprint }}
+      PROJECT: ${{ vars.IAM_PROJECT }}
+      BUCKET: ${{ vars.IAM_STATE_BUCKET }}
+      ROLES: ${{ vars.IAM_GRANT_ROLES }}
+      MEMBERS: ${{ vars.IAM_GRANT_MEMBERS }}
+      TF_IN_AUTOMATION: "true"
+    steps:
+      - name: Resolve trusted source
+        id: source
+        env:
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          MERGED: ${{ github.event.pull_request.merged }}
+        run: |
+          set -euo pipefail
+          sha=$GITHUB_SHA
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            [[ "$TARGET" == production && "$GITHUB_BASE_REF" == production && "$GITHUB_HEAD_REF" == main ]]
+            if [[ "$(jq -r .action "$GITHUB_EVENT_PATH")" == closed ]]; then
+              [[ "$MERGED" == true && "$GITHUB_REF" == refs/heads/production ]]
+              sha=$MERGE_SHA
+            fi
+          elif [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            [[ "$GITHUB_REF" == "refs/heads/$TARGET" ]]
+            if [[ -n "$IAM_PR" ]]; then
+              [[ "$TARGET" == production && "$IAM_PR" =~ ^[1-9][0-9]*$ ]]
+              sha=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$IAM_PR" | jq -er --arg repo "$GITHUB_REPOSITORY" '
+                select(.state == "open" and .base.ref == "production" and .head.ref == "main"
+                  and .head.repo.full_name == $repo and .base.repo.full_name == $repo) | .head.sha')
+            fi
+          else
+            [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/heads/staging ]]
+          fi
+          [[ "$sha" =~ ^[a-f0-9]{40}$ ]]
+          if [[ "$APPLY" == true ]]; then
+            [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$EXPECTED" =~ ^[a-f0-9]{64}$ ]]
+            [[ "$GITHUB_RUN_ATTEMPT" == 1 ]] || { echo 'Start a fresh reviewed IAM dispatch.' >&2; exit 1; }
+            [[ "$TARGET" == staging || -n "$IAM_PR" ]]
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/approvals" |
+              jq -e --arg name "$TARGET-iam-apply" --arg actor "$GITHUB_ACTOR" --arg trigger "$GITHUB_TRIGGERING_ACTOR" '
+                any(.[]; .state == "approved" and .user.login != $actor and .user.login != $trigger
+                  and any(.environments[]; .name == $name))' >/dev/null
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "### IAM source: $sha ($TARGET)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Read declarations and prepare Terraform
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$PROJECT" =~ ^[a-z][a-z0-9-]+$ && "$BUCKET" =~ ^[a-z0-9][-a-z0-9_.]+$ ]]
+          mkdir "$RUNNER_TEMP/iam"
+          cd "$RUNNER_TEMP/iam"
+          gh api "repos/$GITHUB_REPOSITORY/contents/infra/iam/$TARGET.json?ref=$SOURCE_SHA" \
+            -H 'Accept: application/vnd.github.raw+json' > grants.json
+          jq -e --argjson roles "$ROLES" --argjson members "$MEMBERS" '
+            type == "object" and all(to_entries[];
+              (.key | test("^[a-z][a-z0-9_-]*$")) and
+              (.value | type == "object") and
+              (.value | keys | . == ["member","role"] or . == ["adopt","member","role"]) and
+              (.value.adopt | . == null or type == "boolean") and
+              (.value.role as $role | $roles | index($role) != null) and
+              (.value.member as $member | $members | index($member) != null))
+            and (length == (map([.role,.member]) | unique | length))
+          ' grants.json >/dev/null
+          jq -n --arg project "$PROJECT" --slurpfile grants grants.json \
+            '{project:$project,grants:$grants[0]}' > terraform.tfvars.json
+          cat > main.tf <<'HCL'
+          terraform {
+            required_version = ">= 1.10.5, < 2.0"
+            backend "gcs" {}
+            required_providers {
+              google = {
+                source  = "hashicorp/google"
+                version = "= 6.50.0"
+              }
+            }
+          }
+
+          variable "project" { type = string }
+          variable "grants" {
+            type = map(object({
+              member = string
+              role   = string
+              adopt  = optional(bool, false)
+            }))
+          }
+
+          resource "google_project_iam_member" "grant" {
+            for_each = var.grants
+            project  = var.project
+            member   = each.value.member
+            role     = each.value.role
+          }
+
+          import {
+            for_each = { for key, grant in var.grants : key => grant if grant.adopt }
+            to       = google_project_iam_member.grant[each.key]
+            id       = "${var.project} ${each.value.role} ${each.value.member}"
+          }
+          HCL
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.5"
+          terraform_wrapper: false
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
+      - name: Plan or apply reviewed grants
+        id: terraform
+        working-directory: ${{ runner.temp }}/iam
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          terraform init -input=false -backend-config="bucket=$BUCKET" -backend-config=prefix=deployment-iam
+          lock=(-lock=false)
+          if [[ "$APPLY" == true ]]; then lock=(-lock-timeout=120s); fi
+          result=0
+          terraform plan -input=false "${lock[@]}" -detailed-exitcode -out=grants.plan >/dev/null || result=$?
+          [[ "$result" == 0 || "$result" == 2 ]]
+          terraform show -json grants.plan > plan.json
+          jq -e --arg project "$PROJECT" --argjson roles "$ROLES" --argjson members "$MEMBERS" '
+            .complete != false and .errored != true and
+            all(.resource_changes[]?;
+              .mode == "managed" and .type == "google_project_iam_member" and
+              all((.change.before, .change.after) | select(. != null);
+                .project == $project and (.condition | length == 0) and
+                (.role as $role | $roles | index($role) != null) and
+                (.member as $member | $members | index($member) != null)))
+          ' plan.json >/dev/null
+          fingerprint=$(
+            jq -cS --arg sha "$SOURCE_SHA" --arg target "$TARGET/$PROJECT/$BUCKET" '
+              {sha:$sha,target:$target,terraform_version,resource_changes,resource_drift,variables}
+            ' plan.json | sha256sum | cut -d ' ' -f1
+          )
+          pending=false
+          if [[ "$result" == 2 ]] || jq -e 'any(.resource_changes[]?; .change.importing != null)' plan.json >/dev/null; then
+            pending=true
+          fi
+          printf 'fingerprint=%s\npending=%s\n' "$fingerprint" "$pending" >> "$GITHUB_OUTPUT"
+          {
+            printf '\nPlan fingerprint: %s\n\n' "$fingerprint"
+            printf '%s\n' 'Actions | Previous grant | Proposed grant | Import' '--- | --- | --- | ---'
+            jq -r '
+              def display_grant: if . == null then "—" else "\(.member) / \(.role)" end;
+              .resource_changes[]? | .change |
+              select(.actions != ["no-op"] or .importing != null) |
+              [(.actions | join(", ")),(.before | display_grant),(.after | display_grant),
+                (.importing != null | tostring)] |
+              join(" | ")' plan.json
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$APPLY" == true ]]; then
+            [[ "$fingerprint" == "$EXPECTED" ]] || { echo 'IAM plan changed. Start a new reviewed dispatch.' >&2; exit 1; }
+            [[ "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$TARGET" --jq .object.sha)" == "$GITHUB_SHA" ]] ||
+              { echo 'The protected branch advanced. Start a new IAM dispatch.' >&2; exit 1; }
+            if [[ "$TARGET" == production ]]; then
+              gh api "repos/$GITHUB_REPOSITORY/pulls/$IAM_PR" |
+                jq -e --arg sha "$SOURCE_SHA" '(.state == "open") and .head.sha == $sha' >/dev/null ||
+                { echo 'The production PR changed. Start a new IAM dispatch.' >&2; exit 1; }
+            fi
+            if [[ "$pending" == true ]]; then
+              terraform apply -input=false -lock-timeout=120s grants.plan
+            fi
+          fi

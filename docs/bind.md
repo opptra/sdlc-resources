@@ -92,3 +92,44 @@ The script creates the deployer in the production project only, and lets only th
 4. That person runs it and sets `WIF_PROVIDER_PROD` and `WIF_SERVICE_ACCOUNT_PROD`, or sends those two commands to a repository admin.
 
 After step 2, a push to `staging` can deploy. After step 4, a merge into `production` can deploy.
+
+## Bind the deployment IAM identities
+
+Use this opt-in path for an app that uses the Terraform promotion workflow with
+`--with-iam`. The IAM-only bind leaves the app builder, planner and deployer
+grants alone. A developer who can administer IAM in the target project and set
+GitHub environment variables runs it once for each environment.
+
+1. Create `staging-iam-plan`, `staging-iam-apply`, `production-iam-plan` and
+   `production-iam-apply` in the app repository. Restrict apply environments to
+   their matching protected branches. Require a reviewer and prevent self-review
+   on both apply environments. This requires GitHub environment reviewers for
+   the repository. Protect changes to the promotion caller. Set up
+   the shared OIDC provider as described in [GCP bootstrap](gcp-bootstrap.md).
+2. Create one versioned GCS state bucket with uniform bucket-level access per
+   environment and repository. Use a state project controlled by the IAM
+   administrators. Confirm that the ordinary app identities cannot modify these
+   buckets or objects. Each bucket is dedicated to one IAM Terraform state.
+3. Supply the approved roles and member emails and run the appropriate command.
+   Define custom roles outside this workflow. Review their permissions before
+   delegation and whenever they change.
+
+```bash
+IAM_STATE_BUCKET=<staging-iam-state-bucket> \
+IAM_GRANT_ROLES=roles/pubsub.viewer \
+IAM_GRANT_MEMBERS=<staging-planner-email>,<staging-deployer-email> \
+  scripts/bind-staging.sh --with-iam opptra/<repo>
+
+IAM_STATE_BUCKET=<production-iam-state-bucket> \
+IAM_GRANT_ROLES=roles/pubsub.viewer \
+IAM_GRANT_MEMBERS=<production-planner-email>,<production-deployer-email> \
+  scripts/bind-production.sh --with-iam opptra/<repo> <prod-project-id>
+```
+
+The commands create a read identity and a write identity and populate the
+matching GitHub environments. Google Cloud limits the write identity to the
+delegated project roles. The workflow also checks each grant against the
+environment's member list. Project grants can affect shared workloads, so
+choose the narrowest suitable roles. If the role list changes, review the old
+conditional binding and replace it through the bootstrap administrator. Use
+the capability from [the promotion workflow](infra-handoff.md#deployment-iam-in-the-feature-pr).
