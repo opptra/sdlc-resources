@@ -30,3 +30,5 @@ Two kinds of files live here. The guide runs the first kind from a checkout of t
 | [summarize_plan.py](summarize_plan.py) | `terraform-plan`, to write the pull request comment from the JSON plan |
 
 An app generated before `check_secret_versions.py` was added needs one `sync-infra`, then a commit of that file, before the next deploy. The workflow fails if the file is missing. An app that does not yet have `summarize_plan.py` still gets a plan comment: the workflow posts `terraform show` until `sync-infra` copies this file.
+
+`odlc setup-promotion --help` lists the caller setup options. The generated workflow accepts a reviewed run ID and its exact artifact IDs for reviewed dispatches. See [Terraform handoff and promotion](../docs/infra-handoff.md).

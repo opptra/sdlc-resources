@@ -114,6 +114,9 @@ def setup(manifest_path: Path, dest: Path, ref: str, replace_bootstrap: bool) ->
         "      reviewed_run:",
         "        description: Reviewed plan run ID to apply. Leave blank to re-plan a production release.",
         "        type: string",
+        "      reviewed_artifacts:",
+        "        description: Space-separated Terraform artifact IDs for the reviewed run.",
+        "        type: string",
         "  push:",
         "    branches: [staging]",
         "  pull_request:",
@@ -169,6 +172,7 @@ def setup(manifest_path: Path, dest: Path, ref: str, replace_bootstrap: bool) ->
         lines.append(f"    uses: {mapping['repo']}/.github/workflows/terraform-promotion.yml@{ref}")
         lines.append("    with:")
         lines.append("      reviewed_run: ${{ inputs.reviewed_run || '' }}")
+        lines.append("      reviewed_artifacts: ${{ inputs.reviewed_artifacts || '' }}")
         if adopting:
             lines.append('      staging_mode: "reviewed"')
         lines.extend(f"      {name}: {json.dumps(value)}" for name, value in args.items())

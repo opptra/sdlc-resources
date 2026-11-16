@@ -26,3 +26,5 @@ Those deploy workflows build `Dockerfile` inside the component directory. A comp
 |---|---|
 | [pr.yml](pr.yml) | Runs the generator tests and the docs link check on a pull request |
 | [docs.yml](docs.yml) | Publishes `docs/` to GitHub Pages from `main` |
+
+Production promotion approvals select an exact Terraform artifact per component. Reviewed dispatches provide the run ID and artifact IDs. See [Terraform handoff and promotion](../../docs/infra-handoff.md).

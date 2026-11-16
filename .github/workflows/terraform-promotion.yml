@@ -51,6 +51,10 @@ on:
         description: Successful staging or production recovery plan run ID
         type: string
         default: ""
+      reviewed_artifacts:
+        description: Space-separated artifact IDs selected for the reviewed dispatch run
+        type: string
+        default: ""
       migrate:
         description: Optional app script that runs and waits for migrations with RELEASE_IMAGE
         type: string
@@ -224,6 +228,7 @@ jobs:
       PRODUCTION_ADOPTION_IMAGE: ${{ inputs.adoption_image }}
       STAGING_MODE: ${{ inputs.staging_mode }}
       REVIEWED_RUN: ${{ inputs.reviewed_run }}
+      REVIEWED_ARTIFACTS: ${{ inputs.reviewed_artifacts }}
       BUILT_IMAGE: ${{ needs.build.outputs.image }}
       GH_TOKEN: ${{ github.token }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -282,6 +287,7 @@ jobs:
             echo "tree=$tree"
             echo "mode=$mode"
             echo "artifact=$artifact"
+            echo "upload_name=$artifact-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
             echo "key=$key"
           } >> "$GITHUB_OUTPUT"
           python3 scripts/render_tfvars.py --manifest "$manifest" --environment "$TARGET" \
@@ -303,9 +309,37 @@ jobs:
           set -euo pipefail
           workflow_ref=${GITHUB_WORKFLOW_REF%@*}
           workflow_path=${workflow_ref#"$GITHUB_REPOSITORY/"}
-          workflow=${workflow_path##*/}
           review_dir="$RUNNER_TEMP/review"
           image=$BUILT_IMAGE
+          select_receipt() {
+            local ids=$1 expected_run=$2 prefix=$3 artifact id name run attempt
+            local -a selected=()
+            for id in $ids; do
+              [[ "$id" =~ ^[1-9][0-9]*$ ]] || return 1
+              artifact=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id") || return 1
+              name=$(jq -er .name <<<"$artifact") || return 1
+              if [[ "$name" =~ ^${prefix}-([0-9]+)-([0-9]+)$ ]]; then
+                run=${BASH_REMATCH[1]}
+                attempt=${BASH_REMATCH[2]}
+                [[ -z "$expected_run" || "$run" == "$expected_run" ]] || return 1
+                jq -e --arg run "$run" '(.workflow_run.id | tostring) == $run and .expired == false' \
+                  <<<"$artifact" >/dev/null || return 1
+                selected+=("$id $run $attempt")
+              fi
+            done
+            if (( ${#selected[@]} != 1 )); then
+              echo "Select exactly one unexpired review artifact for $prefix." >&2
+              return 1
+            fi
+            printf '%s\n' "${selected[0]}"
+          }
+          download_receipt() {
+            local id=$1
+            mkdir -p "$review_dir"
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" >"$RUNNER_TEMP/review.zip"
+            unzip -p "$RUNNER_TEMP/review.zip" receipt.json >"$review_dir/receipt.json"
+            unzip -p "$RUNNER_TEMP/review.zip" image.json >"$review_dir/image.json"
+          }
 
           if [[ -n "$REVIEWED_RUN" ]]; then
             [[ "$REVIEWED_RUN" =~ ^[0-9]+$ && "$GITHUB_EVENT_NAME" == workflow_dispatch ]]
@@ -315,10 +349,12 @@ jobs:
               event=workflow_dispatch
               branch=production
             fi
-            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$REVIEWED_RUN" |
+            selected=$(select_receipt "$REVIEWED_ARTIFACTS" "$REVIEWED_RUN" "$ARTIFACT")
+            read -r artifact_id run_id attempt <<<"$selected"
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/attempts/$attempt" |
               jq -e --arg path "$workflow_path" --arg event "$event" --arg branch "$branch" --arg sha "$GITHUB_SHA" \
-                '.path == $path and .event == $event and .head_branch == $branch and .head_sha == $sha and .conclusion == "success"'
-            gh run download "$REVIEWED_RUN" --name "$ARTIFACT" --dir "$review_dir"
+                '.path == $path and .event == $event and .head_branch == $branch and .head_sha == $sha and .conclusion == "success"' >/dev/null
+            download_receipt "$artifact_id"
           elif [[ "$TARGET" == prod && ( "$APPLY" == true || "$GITHUB_EVENT_NAME" == workflow_dispatch ) ]]; then
             if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
               pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" | jq -cer --arg sha "$GITHUB_SHA" \
@@ -327,30 +363,30 @@ jobs:
               PR_HEAD=$(jq -er .head.sha <<<"$pr")
               PR_MERGED_AT=$(jq -er .merged_at <<<"$pr")
             fi
-            run_ids=$(gh api --paginate --method GET \
-              "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs" \
-              -f event=pull_request -f status=success -f head_sha="$PR_HEAD" \
-              --jq '.workflow_runs[].id')
-            for run_id in $run_ids; do
-              if gh run download "$run_id" --name "terraform-review-$PR_NUMBER-$COMPONENT_KEY" --dir "$review_dir"; then
-                break
-              fi
-            done
-            [[ -f "$review_dir/receipt.json" ]] || {
-              echo 'No successful production plan receipt found.' >&2
+            reviews=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews")
+            selections=$(jq -r --arg head "$PR_HEAD" --arg merged "$PR_MERGED_AT" '
+              add | map(select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")) |
+              group_by(.user.id) | map(max_by(.id)) |
+              .[] | select(.state == "APPROVED" and .commit_id == $head and .submitted_at <= $merged) |
+              . as $review | .body // "" | split("\n")[] |
+              capture("^Terraform artifact: (?<id>[1-9][0-9]*)[[:space:]]*$") |
+              [.id, $review.submitted_at] | @tsv
+            ' <<<"$reviews")
+            ids=$(cut -f1 <<<"$selections" | sort -u)
+            selected=$(select_receipt "$ids" "" "terraform-review-$PR_NUMBER-$COMPONENT_KEY")
+            read -r artifact_id run_id attempt <<<"$selected"
+            plan_ready=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/attempts/$attempt" |
+              jq -er --arg path "$workflow_path" --arg head "$PR_HEAD" '
+                select(.path == $path and .event == "pull_request" and .head_sha == $head and
+                       .conclusion == "success") | .updated_at')
+            awk -v id="$artifact_id" -v ready="$plan_ready" '
+              $1 == id && $2 >= ready { approved = 1 }
+              END { exit !approved }
+            ' <<<"$selections" || {
+              echo 'Approve the exact Terraform artifact after its run attempt succeeds.' >&2
               exit 1
             }
-            plan_ready=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq .updated_at)
-            gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" |
-              jq -e --arg head "$PR_HEAD" --arg ready "$plan_ready" --arg merged "$PR_MERGED_AT" '
-                add | map(select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")) |
-                group_by(.user.id) | map(max_by(.id)) |
-                any(.[]; .state == "APPROVED" and .commit_id == $head and
-                    .submitted_at >= $ready and .submitted_at <= $merged)
-              ' >/dev/null || {
-                echo 'The selected production plan needs a PR approval after it completes and before merge.' >&2
-                exit 1
-              }
+            download_receipt "$artifact_id"
           fi
 
           if [[ -d "$review_dir" ]]; then
@@ -429,13 +465,20 @@ jobs:
             --tree "$TREE" --environment "$TARGET" --target "$BUCKET/$PREFIX" --mode "$MODE" \
             --out "$RUNNER_TEMP/receipt.json" "${expected[@]}"
       - uses: actions/upload-artifact@v4
+        id: upload
         if: env.APPLY == 'false'
         with:
-          name: ${{ steps.release.outputs.artifact }}
+          name: ${{ steps.release.outputs.upload_name }}
           path: |
             ${{ runner.temp }}/receipt.json
             ${{ runner.temp }}/image.json
           if-no-files-found: error
+      - name: Publish review artifact ID
+        if: env.APPLY == 'false'
+        env:
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+        run: |
+          printf '\nAfter this run succeeds, use this ID in the reviewed dispatch or production PR approval:\n\n`Terraform artifact: %s`\n' "$ARTIFACT_ID" >> "$GITHUB_STEP_SUMMARY"
       - name: Verify release is current
         if: env.APPLY == 'true'
         run: |

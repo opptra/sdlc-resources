@@ -26,6 +26,44 @@ class PromotionTests(unittest.TestCase):
             check=check, capture_output=True, text=True,
         )
 
+    @unittest.skipUnless(shutil.which("jq") and shutil.which("unzip"), "requires jq and unzip")
+    def test_reviewed_dispatch_downloads_selected_artifact_by_id(self):
+        import zipfile
+
+        workflow = (ROOT / ".github/workflows/terraform-promotion.yml").read_text()
+        step = workflow.split("      - name: Resolve reviewed image and plan", 1)[1]
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1].split("      - name:", 1)[0])
+        runner = self.root
+        image = "example/release@" + "sha256:" + "a" * 64
+        (runner / "release.tfvars.json").write_text(json.dumps({"image": "example/release:tree"}))
+        with zipfile.ZipFile(runner / "artifact.zip", "w") as archive:
+            archive.writestr("receipt.json", json.dumps({"tree": "tree", "target": "bucket/app", "mode": "release"}))
+            archive.writestr("image.json", json.dumps({"image": image}))
+        gh = runner / "gh"
+        gh.write_text("""#!/bin/bash
+case "$2" in
+  */artifacts/123) echo '{"name":"terraform-staging-component-42-1","workflow_run":{"id":42},"expired":false}' ;;
+  */artifacts/124) echo '{"name":"terraform-staging-component-42-2","workflow_run":{"id":42},"expired":false}' ;;
+  */runs/42/attempts/1) echo '{"path":".github/workflows/promotion.yml","event":"push","head_branch":"staging","head_sha":"abc","conclusion":"success"}' ;;
+  */artifacts/123/zip) cat "$RUNNER_TEMP/artifact.zip" ;;
+  *) exit 1 ;;
+esac
+""")
+        gh.chmod(0o755)
+        env = dict(os.environ, PATH=f"{runner}:{os.environ['PATH']}", RUNNER_TEMP=str(runner),
+                   GITHUB_WORKFLOW_REF="org/app/.github/workflows/promotion.yml@refs/heads/staging",
+                   GITHUB_REPOSITORY="org/app", GITHUB_EVENT_NAME="workflow_dispatch", GITHUB_SHA="abc",
+                   BUILT_IMAGE="", REVIEWED_RUN="42", REVIEWED_ARTIFACTS="123", TARGET="staging",
+                   ARTIFACT="terraform-staging-component", TREE="tree", BUCKET="bucket", PREFIX="app",
+                   MODE="release", IMAGE_TAG="example/release:tree")
+        valid = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True)
+        self.assertEqual(valid.returncode, 0, valid.stderr)
+        self.assertEqual(json.loads((runner / "image.json").read_text())["image"], image)
+        ambiguous = subprocess.run(["bash", "-c", script], env=env | {"REVIEWED_ARTIFACTS": "123 124"},
+                                   capture_output=True, text=True)
+        self.assertNotEqual(ambiguous.returncode, 0)
+        self.assertIn("Select exactly one", ambiguous.stderr)
+
     def test_backend_selection_cannot_fall_back_to_other_environment(self):
         workflow = (ROOT / ".github/workflows/terraform-promotion.yml").read_text()
         backend = workflow.split("  backend:\n", 1)[1].split("\n  build:\n", 1)[0]
