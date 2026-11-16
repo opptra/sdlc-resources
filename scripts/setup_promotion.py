@@ -16,7 +16,9 @@ from yaml_subset import dump
 OLD_CALLERS = ("plan.yml", "deploy-staging.yml", "deploy-production.yml")
 
 
-def setup(manifest_path: Path, dest: Path, ref: str, replace_bootstrap: bool) -> None:
+def setup(
+    manifest_path: Path, dest: Path, ref: str, replace_bootstrap: bool, with_iam: bool = False,
+) -> None:
     raw = load(manifest_path)
     errors = check(raw)
     if errors:
@@ -129,6 +131,16 @@ def setup(manifest_path: Path, dest: Path, ref: str, replace_bootstrap: bool) ->
         "  id-token: write",
         "jobs:",
     ]
+    if with_iam:
+        lines[lines.index("  push:"):lines.index("  push:")] = [
+            "      apply_iam:",
+            "        description: Preview and apply deployment IAM with environment approval.",
+            "        type: boolean",
+            "        default: false",
+            "      iam_pr:",
+            "        description: Open main-to-production PR number for production IAM apply.",
+            "        type: string",
+        ]
     lines.extend([
         "  ci:",
         "    if: github.event_name == 'push' || github.event.action != 'closed'",
@@ -155,14 +167,65 @@ def setup(manifest_path: Path, dest: Path, ref: str, replace_bootstrap: bool) ->
             "          BASE: ${{ github.event.pull_request.base.sha || github.sha }}",
             '        run: python3 scripts/adoption_check.py --repo "$GITHUB_REPOSITORY" --base "$BASE" >> "$GITHUB_OUTPUT"',
         ])
+    if with_iam:
+        iam_workflow = f"{mapping['repo']}/.github/workflows/terraform-iam.yml@{ref}"
+        lines.extend([
+            "  iam-plan:",
+            "    if: >-",
+            "      (github.event_name == 'push' && github.ref == 'refs/heads/staging') ||",
+            "      (github.event_name == 'workflow_dispatch' &&",
+            "        (github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/production')) ||",
+            "      (github.event_name == 'pull_request' && github.base_ref == 'production' &&",
+            "        github.head_ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository &&",
+            "        (github.event.action != 'closed' || github.event.pull_request.merged))",
+            f"    uses: {iam_workflow}",
+            "    with:",
+            "      iam_pr: ${{ inputs.apply_iam && inputs.iam_pr || '' }}",
+            "  iam-apply:",
+            "    needs: iam-plan",
+            "    if: github.event_name == 'workflow_dispatch' && inputs.apply_iam && needs.iam-plan.outputs.pending == 'true'",
+            f"    uses: {iam_workflow}",
+            "    with:",
+            "      iam_pr: ${{ inputs.iam_pr || '' }}",
+            "      apply: true",
+            "      fingerprint: ${{ needs.iam-plan.outputs.fingerprint }}",
+            "  iam-ready:",
+            "    needs: iam-plan",
+            "    if: always() && !cancelled() && needs.iam-plan.result != 'skipped' && !inputs.apply_iam",
+            "    runs-on: ubuntu-latest",
+            "    permissions: {}",
+            "    env:",
+            "      PLAN_RESULT: ${{ needs.iam-plan.result }}",
+            "      PENDING: ${{ needs.iam-plan.outputs.pending }}",
+            "    steps:",
+            "      - run: |",
+            "          if [[ \"$PLAN_RESULT\" != success ]]; then",
+            "            echo 'Deployment IAM preview failed. Open the IAM plan job for details.' >&2",
+            "            exit 1",
+            "          fi",
+            "          if [[ \"$PENDING\" != false ]]; then",
+            "            echo 'Deployment IAM is pending. Review the IAM plan and dispatch with apply_iam before planning or deploying the app.' >&2",
+            "            exit 1",
+            "          fi",
+        ])
+    dependencies = ["ci"]
+    if adopting:
+        dependencies.append("adoption")
+    if with_iam:
+        dependencies.append("iam-ready")
     for index, args in enumerate(jobs, start=1):
         lines.extend([
             f"  terraform-{index}:",
-            "    needs: [ci, adoption]" if adopting else "    needs: ci",
+            f"    needs: [{', '.join(dependencies)}]" if len(dependencies) > 1 else "    needs: ci",
             "    if: >-",
             "      ${{ always() && !cancelled() && (needs.ci.result == 'success' ||",
             "        (github.event.action == 'closed' && needs.ci.result == 'skipped'))",
         ])
+        if with_iam:
+            lines.append(
+                "        && ((github.event_name == 'pull_request' && github.base_ref == 'main' &&"
+                " needs.iam-ready.result == 'skipped') || needs.iam-ready.result == 'success')"
+            )
         if adopting:
             lines.extend([
                 "        && (github.ref == 'refs/heads/staging' || (needs.adoption.result == 'success' &&",
@@ -189,6 +252,16 @@ def setup(manifest_path: Path, dest: Path, ref: str, replace_bootstrap: bool) ->
             shutil.copy2(ROOT / "scripts" / name, path)
     if root_deployment is not None and not (dest / "service.deploy.yaml").exists():
         (dest / "service.deploy.yaml").write_text(dump(root_deployment))
+    if with_iam:
+        iam_root = dest / "infra" / "iam"
+        iam_root.mkdir(parents=True, exist_ok=True)
+        for source in (ROOT / "skeletons" / "iam").glob("*.json"):
+            target = iam_root / source.name
+            if not target.exists():
+                shutil.copy2(source, target)
+        helper = scripts / "bind-iam.sh"
+        if not helper.exists():
+            shutil.copy2(ROOT / "scripts" / helper.name, helper)
     caller.write_text("\n".join(lines) + "\n")
     for path in existing:
         path.unlink()
@@ -215,10 +288,13 @@ def main(argv: list[str]) -> int:
     parser.add_argument("manifest", type=Path)
     parser.add_argument("dest", type=Path, nargs="?", default=Path("."))
     parser.add_argument("--workflow-ref", required=True)
-    parser.add_argument("--replace-bootstrap-workflows", action="store_true")
+    parser.add_argument("--replace-bootstrap-workflows", action="store_true",
+                        help="Replace unchanged generated plan and deploy callers")
+    parser.add_argument("--with-iam", action="store_true",
+                        help="Generate IAM declarations and the protected IAM steps in the promotion caller")
     args = parser.parse_args(argv)
     try:
-        setup(args.manifest.resolve(), args.dest.resolve(), args.workflow_ref, args.replace_bootstrap_workflows)
+        setup(args.manifest.resolve(), args.dest.resolve(), args.workflow_ref, args.replace_bootstrap_workflows, args.with_iam)
     except ValueError as exc:
         parser.exit(1, f"{exc}\n")
     return 0

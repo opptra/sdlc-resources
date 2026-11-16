@@ -84,3 +84,71 @@ Apps opt in through a PR. Their existing callers continue working until that app
 3. To update a future workflow release, change the shared workflow SHA in the caller and review it in an app PR. Compare both environment plans, configure the environment identities, and update the caller with both dispatch inputs, `pull-requests: read` permission, and any versioned helper scripts. Let any in-flight production PRs finish on their pinned workflow before changing the pin. The ownership marker and the workflow SHA solve different problems. The marker protects app files from regeneration, while the SHA controls deployment behavior.
 
 When upgrading a caller to exact artifact selection, add a string `reviewed_artifacts` input under `workflow_dispatch` and forward it to each reusable workflow call alongside `reviewed_run`. Use a fresh plan from the upgraded workflow for each promotion or reviewed dispatch. Finish in-flight releases on their existing workflow pin before upgrading.
+
+## Deployment IAM in the feature PR
+
+An application PR can change app code, resources, and deployment IAM together.
+Use `odlc setup-promotion service.yaml . --workflow-ref <published-sha> --with-iam`
+when generating a new promotion caller. For an existing promotion caller,
+generate an example in a separate copy, then port its IAM dispatch inputs,
+`iam-plan`, `iam-apply`, `iam-ready`, and component dependencies to the
+checked-in caller. Preserve the app's existing state settings, component paths,
+and hooks. Install the updated bind scripts and their shared helper from the
+same SDLC revision, or run them from that revision's SDLC checkout. Configure the
+[protected environments and state](bind.md#bind-the-deployment-iam-identities)
+before enabling the gate. Require the `iam-ready` check on production so a pending
+or failed preview blocks merge. First promote the caller with empty declarations so
+the protected production branch can dispatch it.
+
+The caller reads `infra/iam/staging.json` and `infra/iam/production.json`.
+Each entry is an additive project grant. Keep its key stable. For example:
+
+```json
+{
+  "reporting-planner": {
+    "member": "serviceAccount:reporting-planner@example-project.iam.gserviceaccount.com",
+    "role": "roles/pubsub.viewer"
+  }
+}
+```
+
+Use this folder for reviewed project grants that the bootstrap administrator
+has delegated. Keep resource-specific IAM in the owning app module, where
+Terraform can reference the resource and order the binding after creation.
+A binding requiring authority outside the app deployer's scope needs a
+reviewed setup by the administrator of that resource. The shared IAM workflow
+currently handles project grants. Review dependency removal before retiring a
+grant that a live workload still needs.
+
+1. Include the application and grant declarations in the same feature PR.
+   Push the candidate to staging. If the IAM preview finds a change, the app
+   check waits for it to be applied.
+2. In Actions, dispatch the promotion caller on `staging` with `apply_iam`
+   selected. A second developer reviews the IAM plan in the run summary and
+   approves the `staging-iam-apply` job. The job replans and compares its
+   fingerprint before applying. Then rerun the original staging release,
+   or dispatch staging with the inputs blank to create a fresh app plan and
+   apply it with its reviewed run and artifact IDs.
+3. For production, open the usual `main` to `production` PR. If grants are
+   pending, dispatch on `production` with `apply_iam` selected and enter that
+   PR number in `iam_pr`. Review the IAM plan and approve the
+   `production-iam-apply` job. Rerun all jobs on the same promotion PR so the
+   app can plan with the new access. Approve the app's exact artifacts after
+   planning succeeds. Merge the normal promotion PR to deploy.
+4. If the grant cannot be applied, the run reports the failing declaration or
+   cloud operation. Check whether the requested role and member were delegated.
+   If the source commit or IAM plan changes before apply, start a new reviewed
+   dispatch. If access was applied and the feature is dropped, review whether
+   the grant is still needed before removing its declaration.
+
+### Pilot with an existing app
+
+Start with empty IAM declarations and retain the existing deploy identities
+and grants. Pick one existing additive project grant with a clear owner.
+Set `"adopt": true` on that entry to generate a Terraform import. If another
+Terraform state already owns the binding, coordinate a state-only transfer
+before import. Review the preview for an import with no grant additions or
+removals. After apply, rerun the IAM preview and the normal app plan. Rehearse
+in staging first and repeat with one production grant. Retire an old writer
+only after Terraform has recorded the grant and both environments can still
+release. Review broad role reductions separately.

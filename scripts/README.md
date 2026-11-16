@@ -32,3 +32,9 @@ Two kinds of files live here. The guide runs the first kind from a checkout of t
 An app generated before `check_secret_versions.py` was added needs one `sync-infra`, then a commit of that file, before the next deploy. The workflow fails if the file is missing. An app that does not yet have `summarize_plan.py` still gets a plan comment: the workflow posts `terraform show` until `sync-infra` copies this file.
 
 `odlc setup-promotion --help` lists the caller setup options. The generated workflow accepts a reviewed run ID and its exact artifact IDs for reviewed dispatches. See [Terraform handoff and promotion](../docs/infra-handoff.md).
+
+Use `odlc setup-promotion --with-iam` with the manifest and published workflow
+SHA to generate IAM declarations and caller wiring. The
+[bind helper](bind-iam.sh) is invoked by either environment's bind script with
+`--with-iam`. See [IAM setup](../docs/bind.md#bind-the-deployment-iam-identities)
+for the required bucket and delegation values.

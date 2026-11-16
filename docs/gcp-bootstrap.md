@@ -126,3 +126,11 @@ On the billing account, add a budget for `opptra-staging` that notifies at 50%, 
 ## 9. Region
 
 New services use `asia-south1`, set in `service.yaml`. The Artifact Registry repository is created in that region.
+
+## State and authority for deployment IAM
+
+For repositories using the optional same-PR IAM flow, use dedicated state buckets
+outside the ordinary app deployer's write scope. An administrator authorizes the
+staging and production IAM identities through the opt-in bind commands.
+See [Bind the deployment IAM identities](bind.md#bind-the-deployment-iam-identities)
+for GitHub environment protections, state requirements, and commands.

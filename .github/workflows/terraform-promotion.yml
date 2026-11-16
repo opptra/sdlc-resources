@@ -142,7 +142,8 @@ jobs:
   build:
     needs: backend
     if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/staging' && inputs.staging_adoption_image == '') ||
+      ((github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.reviewed_run == '')) &&
+       github.ref == 'refs/heads/staging' && inputs.staging_adoption_image == '') ||
       (github.event_name == 'pull_request' && github.event.action != 'closed' &&
         github.base_ref == 'production' && github.head_ref == 'main' &&
         github.event.pull_request.head.repo.full_name == github.repository && inputs.adoption_image == '')
@@ -252,10 +253,6 @@ jobs:
                 exit 1
               }
           fi
-          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$TARGET" == staging && -z "$REVIEWED_RUN" ]]; then
-            echo 'Push to staging for a plan, then dispatch with its reviewed run ID.' >&2
-            exit 1
-          fi
           cd "$GITHUB_WORKSPACE"
           for old in plan deploy-staging deploy-production; do
             if [[ -f ".github/workflows/$old.yml" ]]; then
@@ -353,7 +350,8 @@ jobs:
             read -r artifact_id run_id attempt <<<"$selected"
             gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/attempts/$attempt" |
               jq -e --arg path "$workflow_path" --arg event "$event" --arg branch "$branch" --arg sha "$GITHUB_SHA" \
-                '.path == $path and .event == $event and .head_branch == $branch and .head_sha == $sha and .conclusion == "success"' >/dev/null
+                ' .path == $path and (.event == $event or ($branch == "staging" and .event == "workflow_dispatch")) and
+                  .head_branch == $branch and .head_sha == $sha and .conclusion == "success"' >/dev/null
             download_receipt "$artifact_id"
           elif [[ "$TARGET" == prod && ( "$APPLY" == true || "$GITHUB_EVENT_NAME" == workflow_dispatch ) ]]; then
             if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then

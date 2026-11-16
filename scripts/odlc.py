@@ -12,7 +12,7 @@ Subcommands:
   init-runtime <service.yaml> [dest]          Phase 2: Scaffold runtime, openspec/, and entrypoints
   add-data <service.yaml> [dest]              Phase 3: Install data/storage/queue/secret packages & helpers
   add-tests <service.yaml> [dest]             Phase 4: Configure test runners and capability test fixtures
-  setup-promotion <service.yaml> [dest] --workflow-ref <sha>
+  setup-promotion <service.yaml> [dest] --workflow-ref <sha> [--with-iam]
   adoption-check --repo <owner/repository>
   sync [service.yaml] [dest]                  Alias for `sync-infra`
   sync-infra <service.yaml> [dest] [--ci-only] Phase 5: Generate Terraform, workflows, rules, and README
