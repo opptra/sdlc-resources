@@ -80,10 +80,13 @@ jq -e --arg member "serviceAccount:$applier" --arg title "$title" --arg expressi
 
 # Verify the apply environment before giving any workflow cloud authority.
 gh api "repos/$repo/environments/$environment-iam-plan" >/dev/null
-gh api "repos/$repo/environments/$environment-iam-apply" |
-  jq -e '.deployment_branch_policy.custom_branch_policies and
-    any(.protection_rules[]?; .type == "required_reviewers" and
-      .prevent_self_review == true and (.reviewers | length > 0))' >/dev/null ||
+apply_environment=$(gh api "repos/$repo/environments/$environment-iam-apply")
+if [[ "$environment" == staging ]]; then
+  jq -e 'any(.protection_rules[]?; .type == "required_reviewers" and .prevent_self_review == true and (.reviewers | length > 0))' <<<"$apply_environment" >/dev/null ||
+    { echo "Require a teammate reviewer for staging-iam-apply." >&2; exit 1; }
+fi
+printf '%s\n' "$apply_environment" |
+  jq -e '.deployment_branch_policy.custom_branch_policies' >/dev/null ||
   { echo "Configure required reviewers, prevent self-review, and select a branch for $environment-iam-apply." >&2; exit 1; }
 gh api --paginate --slurp "repos/$repo/environments/$environment-iam-apply/deployment-branch-policies" |
   jq -e --arg branch "$environment" '

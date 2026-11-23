@@ -7,6 +7,7 @@ Keep the staging and production backend locations separate and preserve their ke
 When the promotion caller uses deployment IAM, include needed Terraform grants
 in the feature PR. Put delegated project grants in `infra/iam/<environment>.json`.
 Keep workload bindings in the Terraform root that owns the resource policy.
-Use the protected IAM dispatch to apply prerequisite grants before the app plan
-or apply. If the requested scope exceeds the delegation, identify the owner
+IAM additions run before deployment in the release workflow. Production
+changes apply after merge. Staging changes wait for environment approval.
+Retired grants are removed only after every component completes post_apply. If the requested scope exceeds the delegation, identify the owner
 who can extend it.

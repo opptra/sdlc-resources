@@ -3,16 +3,16 @@ name: Terraform deployment grants
 on:
   workflow_call:
     inputs:
-      iam_pr:
-        description: Open main-to-production PR number for a production IAM dispatch
+      phase:
+        description: additions preserves existing grants, cleanup removes retired grants after app verification
         type: string
-        default: ""
+        default: additions
       apply:
-        description: Apply the plan reviewed earlier in this dispatch
+        description: Apply the matching plan during an authorized release
         type: boolean
         default: false
       fingerprint:
-        description: Expected plan fingerprint from the preview in this dispatch
+        description: Expected plan fingerprint from the preview in this release
         type: string
         default: ""
     outputs:
@@ -40,7 +40,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       TARGET: ${{ (github.base_ref == 'production' || github.ref == 'refs/heads/production') && 'production' || 'staging' }}
-      IAM_PR: ${{ inputs.iam_pr }}
+      PHASE: ${{ inputs.phase }}
       APPLY: ${{ inputs.apply }}
       EXPECTED: ${{ inputs.fingerprint }}
       PROJECT: ${{ vars.IAM_PROJECT }}
@@ -54,6 +54,7 @@ jobs:
         env:
           MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
           MERGED: ${{ github.event.pull_request.merged }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           sha=$GITHUB_SHA
@@ -65,24 +66,45 @@ jobs:
             fi
           elif [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
             [[ "$GITHUB_REF" == "refs/heads/$TARGET" ]]
-            if [[ -n "$IAM_PR" ]]; then
-              [[ "$TARGET" == production && "$IAM_PR" =~ ^[1-9][0-9]*$ ]]
-              sha=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$IAM_PR" | jq -er --arg repo "$GITHUB_REPOSITORY" '
-                select(.state == "open" and .base.ref == "production" and .head.ref == "main"
-                  and .head.repo.full_name == $repo and .base.repo.full_name == $repo) | .head.sha')
-            fi
+
           else
             [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/heads/staging ]]
           fi
           [[ "$sha" =~ ^[a-f0-9]{40}$ ]]
           if [[ "$APPLY" == true ]]; then
-            [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$EXPECTED" =~ ^[a-f0-9]{64}$ ]]
-            [[ "$GITHUB_RUN_ATTEMPT" == 1 ]] || { echo 'Start a fresh reviewed IAM dispatch.' >&2; exit 1; }
-            [[ "$TARGET" == staging || -n "$IAM_PR" ]]
-            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/approvals" |
-              jq -e --arg name "$TARGET-iam-apply" --arg actor "$GITHUB_ACTOR" --arg trigger "$GITHUB_TRIGGERING_ACTOR" '
-                any(.[]; .state == "approved" and .user.login != $actor and .user.login != $trigger
-                  and any(.environments[]; .name == $name))' >/dev/null
+            [[ "$EXPECTED" =~ ^[a-f0-9]{64}$ ]]
+            if [[ "$TARGET" == production ]]; then
+              if ! { [[ "$GITHUB_EVENT_NAME" == pull_request &&
+                        "$(jq -r .action "$GITHUB_EVENT_PATH")" == closed &&
+                        "$MERGED" == true && "$GITHUB_REF" == refs/heads/production ]] ||
+                     [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$GITHUB_REF" == refs/heads/production ]]; }; then
+                echo 'Production IAM writes require a merged promotion or its recovery run.' >&2
+                exit 1
+              fi
+              # Check peer approval before any production IAM write, including recovery.
+              if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+                PR_NUMBER=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha/pulls" |
+                  jq -er --arg sha "$sha" '
+                    [.[] | select(.merged_at and .merge_commit_sha == $sha and
+                      .base.ref == "production" and .head.ref == "main")] |
+                    if length == 1 then .[0].number else error("No unique merged promotion PR") end')
+              fi
+              pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")
+              head=$(jq -er '.head.sha' <<<"$pr")
+              author=$(jq -er '.user.login' <<<"$pr")
+              merged_at=$(jq -er '.merged_at' <<<"$pr")
+              gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" |
+                jq -e --arg head "$head" --arg author "$author" --arg merged "$merged_at" '
+                  add | map(select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")) |
+                  group_by(.user.id) | map(max_by(.id)) |
+                  any(.[]; .state == "APPROVED" and .commit_id == $head and
+                    .user.login != $author and .submitted_at <= $merged)' >/dev/null
+            else
+              gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/approvals" |
+                jq -e --arg name staging-iam-apply --arg actor "$GITHUB_ACTOR" '
+                  any(.[]; .state == "approved" and .user.login != $actor
+                    and any(.environments[]; .name == $name))' >/dev/null
+            fi
           fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "### IAM source: $sha ($TARGET)" >> "$GITHUB_STEP_SUMMARY"
@@ -158,6 +180,43 @@ jobs:
         run: |
           set -euo pipefail
           terraform init -input=false -backend-config="bucket=$BUCKET" -backend-config=prefix=deployment-iam
+          [[ "$PHASE" == additions || "$PHASE" == cleanup ]]
+          # Refresh the current state before computing the temporary union.
+          if ! terraform state pull > current-state.json 2>state-error.txt; then
+            # Terraform emits this message for an initialized backend with no state.
+            if grep -q 'No state file was found' state-error.txt && [[ ! -s current-state.json ]]; then
+              printf '{"resources":[]}\n' > current-state.json
+            else
+              cat state-error.txt >&2
+              echo 'Cannot read IAM state. Stop before changing grants.' >&2
+              exit 1
+            fi
+          fi
+          jq --slurpfile desired terraform.tfvars.json '
+            [ .resources[]? | select(.type == "google_project_iam_member" and .name == "grant") |
+              .instances[] | {key:.index_key,value:{member:.attributes.member,role:.attributes.role}} ] |
+            from_entries as $old |
+            $desired[0].grants as $new |
+            if any($new | to_entries[];
+                . as $entry | any($old | to_entries[];
+                  .key != $entry.key and .value.member == $entry.value.member and .value.role == $entry.value.role))
+            then error("Grant key rename requires an explicit state move before release")
+            elif any($old | to_entries[];
+                . as $entry | $new[$entry.key] != null and
+                ($new[$entry.key].member != $entry.value.member or $new[$entry.key].role != $entry.value.role))
+            then error("Use a new key for a changed grant so old access survives deployment")
+            else $desired[0] + {grants:($old + $new)} end
+          ' current-state.json > additions.tfvars.tmp
+          if [[ "$PHASE" == additions ]]; then
+            {
+              echo '### Existing grants retained until verified cleanup'
+              jq -r --slurpfile desired terraform.tfvars.json '
+                .grants | to_entries[] | select($desired[0].grants[.key] == null) |
+                "- " + .key + ": " + .value.member + " / " + .value.role
+              ' additions.tfvars.tmp
+            } >> "$GITHUB_STEP_SUMMARY"
+            mv additions.tfvars.tmp terraform.tfvars.json
+          fi
           lock=(-lock=false)
           if [[ "$APPLY" == true ]]; then lock=(-lock-timeout=120s); fi
           result=0
@@ -173,9 +232,13 @@ jobs:
                 (.role as $role | $roles | index($role) != null) and
                 (.member as $member | $members | index($member) != null)))
           ' plan.json >/dev/null
+          if [[ "$PHASE" == additions ]]; then
+            jq -e 'all(.resource_changes[]?; (.change.actions | index("delete")) == null)' plan.json >/dev/null ||
+              { echo 'An additions plan cannot remove access.' >&2; exit 1; }
+          fi
           fingerprint=$(
-            jq -cS --arg sha "$SOURCE_SHA" --arg target "$TARGET/$PROJECT/$BUCKET" '
-              {sha:$sha,target:$target,terraform_version,resource_changes,resource_drift,variables}
+            jq -cS --arg sha "$SOURCE_SHA" --arg phase "$PHASE" --arg target "$TARGET/$PROJECT/$BUCKET" '
+              {sha:$sha,phase:$phase,target:$target,terraform_version,resource_changes,resource_drift,variables}
             ' plan.json | sha256sum | cut -d ' ' -f1
           )
           pending=false
@@ -195,14 +258,9 @@ jobs:
               join(" | ")' plan.json
           } >> "$GITHUB_STEP_SUMMARY"
           if [[ "$APPLY" == true ]]; then
-            [[ "$fingerprint" == "$EXPECTED" ]] || { echo 'IAM plan changed. Start a new reviewed dispatch.' >&2; exit 1; }
+            [[ "$fingerprint" == "$EXPECTED" ]] || { echo 'IAM plan changed. Review a fresh release plan.' >&2; exit 1; }
             [[ "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$TARGET" --jq .object.sha)" == "$GITHUB_SHA" ]] ||
-              { echo 'The protected branch advanced. Start a new IAM dispatch.' >&2; exit 1; }
-            if [[ "$TARGET" == production ]]; then
-              gh api "repos/$GITHUB_REPOSITORY/pulls/$IAM_PR" |
-                jq -e --arg sha "$SOURCE_SHA" '(.state == "open") and .head.sha == $sha' >/dev/null ||
-                { echo 'The production PR changed. Start a new IAM dispatch.' >&2; exit 1; }
-            fi
+              { echo 'The protected branch advanced. Start a new release.' >&2; exit 1; }
             if [[ "$pending" == true ]]; then
               terraform apply -input=false -lock-timeout=120s grants.plan
             fi

@@ -90,15 +90,17 @@ When upgrading a caller to exact artifact selection, add a string `reviewed_arti
 An application PR can change app code, resources, and deployment IAM together.
 Use `odlc setup-promotion service.yaml . --workflow-ref <published-sha> --with-iam`
 when generating a new promotion caller. For an existing promotion caller,
-generate an example in a separate copy, then port its IAM dispatch inputs,
-`iam-plan`, `iam-apply`, `iam-ready`, and component dependencies to the
-checked-in caller. Preserve the app's existing state settings, component paths,
+generate an example in a separate copy, then port its
+`iam-plan`, `iam-apply`, `iam-ready`, cleanup jobs, and component dependencies to the
+checked-in caller. Remove the obsolete `apply_iam` and `iam_pr` inputs if
+upgrading a caller from the draft IAM flow. Preserve the app's existing state settings, component paths,
 and hooks. Install the updated bind scripts and their shared helper from the
 same SDLC revision, or run them from that revision's SDLC checkout. Configure the
 [protected environments and state](bind.md#bind-the-deployment-iam-identities)
-before enabling the gate. Require the `iam-ready` check on production so a pending
-or failed preview blocks merge. First promote the caller with empty declarations so
-the protected production branch can dispatch it.
+before enabling the flow. First land the caller with empty declarations.
+Protect production merges with peer review and the app plan checks. Production
+IAM uses that merge approval. Staging IAM uses a teammate approval on the
+`staging-iam-apply` environment within the staging release run.
 
 The caller reads `infra/iam/staging.json` and `infra/iam/production.json`.
 Each entry is an additive project grant. Keep its key stable. For example:
@@ -120,26 +122,47 @@ reviewed setup by the administrator of that resource. The shared IAM workflow
 currently handles project grants. Review dependency removal before retiring a
 grant that a live workload still needs.
 
-1. Include the application and grant declarations in the same feature PR.
-   Push the candidate to staging. If the IAM preview finds a change, the app
-   check waits for it to be applied.
-2. In Actions, dispatch the promotion caller on `staging` with `apply_iam`
-   selected. A second developer reviews the IAM plan in the run summary and
-   approves the `staging-iam-apply` job. The job replans and compares its
-   fingerprint before applying. Then rerun the original staging release,
-   or dispatch staging with the inputs blank to create a fresh app plan and
-   apply it with its reviewed run and artifact IDs.
-3. For production, open the usual `main` to `production` PR. If grants are
-   pending, dispatch on `production` with `apply_iam` selected and enter that
-   PR number in `iam_pr`. Review the IAM plan and approve the
-   `production-iam-apply` job. Rerun all jobs on the same promotion PR so the
-   app can plan with the new access. Approve the app's exact artifacts after
-   planning succeeds. Merge the normal promotion PR to deploy.
-4. If the grant cannot be applied, the run reports the failing declaration or
-   cloud operation. Check whether the requested role and member were delegated.
-   If the source commit or IAM plan changes before apply, start a new reviewed
-   dispatch. If access was applied and the feature is dropped, review whether
-   the grant is still needed before removing its declaration.
+1. Include application resources and deployment grants in one feature PR.
+   Push the candidate to staging. The run previews additions while retaining
+   existing access. When additions are needed, a teammate approves the staging
+   IAM job in Actions. The same release then builds, plans and deploys.
+2. Open the usual `main` to `production` PR. It previews grants and app
+   changes without modifying IAM. Approve the exact app artifacts after all
+   required checks pass. A missing planner read permission is a bootstrap
+   prerequisite, which an administrator must resolve before review can finish.
+3. After merge, GitHub replans the prerequisite grants and applies a matching
+   plan using the production IAM identity. It then builds or resolves images,
+   verifies the reviewed app receipt, and deploys.
+4. After every component has successfully applied and completed a configured
+   `post_apply` hook, GitHub previews and applies cleanup of retired project
+   grants. A failure, preview-only run, or missing verification hook retains
+   old grants. Staging cleanup also requires its environment reviewer.
+5. For reviewed staging and production recovery dispatches, use the existing
+   `reviewed_run` and `reviewed_artifacts` inputs. IAM uses the current
+   protected branch revision. There is no separate IAM dispatch input.
+
+Keep grant keys stable. The pipeline rejects changing a role or member under
+an existing key, or renaming a key for the same binding. For changed access,
+add a new key and remove the obsolete key in the same feature PR. The additions
+phase retains the obsolete grant until verified cleanup. A pure key rename
+requires an administrator-coordinated Terraform state move.
+
+The IAM apply checks the same commit and plan fingerprint as its preview
+within the release run, and stops if the protected branch advances. Production
+PR and merged revisions are separately planned against their actual source.
+The merge review authorizes declarations, while the app receipt checks that
+the final application changes match the reviewed plan. An abandoned or failed
+release can leave newly added grants in place. Review them in the next release.
+
+### New and aligned repositories
+
+For new Cloud Run apps, use `setup-promotion --with-iam` during create-app
+handoff and configure both environments before the first release. For aligned
+Terraform apps, preserve state and custom hooks while porting the generated
+IAM jobs and component dependencies. Configure `post_apply` on every component
+before enabling automatic grant cleanup. CI-only alignment for a legacy host
+keeps that host's deployment path. VM workers and config-only repositories
+retain their existing deployment arrangements.
 
 ### Pilot with an existing app
 

@@ -170,12 +170,19 @@ esac
         self.odlc("setup-promotion", manifest, repo, "--workflow-ref", "a" * 40,
                   "--replace-bootstrap-workflows", "--with-iam")
         caller = (repo / ".github/workflows/promotion.yml").read_text()
-        self.assertEqual(caller.count("terraform-iam.yml@" + "a" * 40), 2)
+        self.assertEqual(caller.count("terraform-iam.yml@" + "a" * 40), 4)
         self.assertEqual(caller.count("needs: [ci, iam-ready]"), 2)
         self.assertIn("fingerprint: ${{ needs.iam-plan.outputs.fingerprint }}", caller)
         self.assertEqual(json.loads((repo / "infra/iam/production.json").read_text()), {})
         self.assertEqual(json.loads((repo / "infra/iam/staging.json").read_text()), {})
         self.assertTrue((repo / "scripts/bind-iam.sh").exists())
+        self.assertNotIn("apply_iam:", caller)
+        self.assertNotIn("iam_pr:", caller)
+        self.assertIn("needs: [terraform-1, terraform-2]", caller)
+        self.assertIn("needs.terraform-1.outputs.applied == 'true' && needs.terraform-2.outputs.applied == 'true'", caller)
+        self.assertIn("phase: cleanup", caller)
+        workflow = (ROOT / ".github/workflows/terraform-promotion.yml").read_text()
+        self.assertIn('if [[ -n "$POST_APPLY" ]]', workflow.split("Record verified apply")[1])
         for phase in ("staging", "production"):
             help_text = subprocess.check_output(["bash", str(repo / f"scripts/bind-{phase}.sh"), "--help"],
                                                 text=True)
@@ -224,6 +231,7 @@ esac
         terraform.write_text("""#!/bin/bash
 case "$1" in
   init) exit 0 ;;
+  state) echo '{"resources":[]}' ;;
   plan) exit 2 ;;
   show) cat "$FIXTURE_PLAN" ;;
   apply) touch applied ;;
@@ -248,6 +256,7 @@ esac
         output = self.root / "outputs"
         env = dict(os.environ, PATH=f"{self.root}:{os.environ['PATH']}", FIXTURE_PLAN=str(plan),
                    TARGET="staging", PROJECT="example-project", BUCKET="example-state",
+                   PHASE="additions",
                    ROLES='["roles/pubsub.viewer"]', MEMBERS=json.dumps([member]), APPLY="false",
                    SOURCE_SHA="a" * 40, GITHUB_SHA="a" * 40, GITHUB_REPOSITORY="org/app",
                    GITHUB_OUTPUT=str(output), GITHUB_STEP_SUMMARY=str(self.root / "summary"))
@@ -256,6 +265,7 @@ esac
             return subprocess.run(["bash", "-c", script], env=env | overrides, cwd=self.root,
                                   capture_output=True, text=True)
 
+        (self.root / "terraform.tfvars.json").write_text(json.dumps({"project": "example-project", "grants": {}}))
         preview = run()
         self.assertEqual(preview.returncode, 0, preview.stderr)
         self.assertIn("pending=true", output.read_text())
@@ -266,6 +276,58 @@ esac
         applied = run(APPLY="true", EXPECTED=fingerprint)
         self.assertEqual(applied.returncode, 0, applied.stderr)
         self.assertTrue((self.root / "applied").exists())
+
+    @unittest.skipUnless(shutil.which("jq"), "requires jq")
+    def test_iam_additions_keep_old_access_and_cleanup_uses_desired_grants(self):
+        workflow = (ROOT / ".github/workflows/terraform-iam.yml").read_text()
+        step = workflow.split("      - name: Plan or apply reviewed grants", 1)[1]
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1]).split("lock=(-lock=false)", 1)[0]
+        old = {"member": "serviceAccount:app@example.iam.gserviceaccount.com", "role": "roles/pubsub.viewer"}
+        new = old | {"role": "roles/pubsub.publisher"}
+        state = self.root / "state.json"
+        state.write_text(json.dumps({"resources": [{"type": "google_project_iam_member", "name": "grant",
+            "instances": [{"index_key": "reader", "attributes": old}]}]}))
+        terraform = self.root / "terraform"
+        terraform.write_text('#!/bin/bash\nif [[ "$1" == init ]]; then exit 0; fi\ncat "$STATE_FIXTURE"\n')
+        terraform.chmod(0o755)
+        tfvars = self.root / "terraform.tfvars.json"
+        env = dict(os.environ, PATH=f"{self.root}:{os.environ['PATH']}", STATE_FIXTURE=str(state),
+                   BUCKET="state", PHASE="additions", GITHUB_STEP_SUMMARY=str(self.root / "summary"))
+        def run(grants, phase):
+            tfvars.write_text(json.dumps({"project": "example", "grants": grants}))
+            return subprocess.run(["bash", "-c", script], cwd=self.root, env=env | {"PHASE": phase},
+                                  capture_output=True, text=True)
+        added = run({"publisher": new}, "additions")
+        self.assertEqual(added.returncode, 0, added.stderr)
+        self.assertEqual(json.loads(tfvars.read_text())["grants"], {"reader": old, "publisher": new})
+        cleanup = run({"publisher": new}, "cleanup")
+        self.assertEqual(cleanup.returncode, 0, cleanup.stderr)
+        self.assertEqual(json.loads(tfvars.read_text())["grants"], {"publisher": new})
+        renamed = run({"new-reader-name": old}, "additions")
+        self.assertNotEqual(renamed.returncode, 0)
+        self.assertIn("key rename", renamed.stderr)
+        replaced = run({"reader": new}, "additions")
+        self.assertNotEqual(replaced.returncode, 0)
+        self.assertIn("Use a new key", replaced.stderr)
+
+    @unittest.skipUnless(shutil.which("jq"), "requires jq")
+    def test_production_iam_write_rejects_an_open_pr(self):
+        workflow = (ROOT / ".github/workflows/terraform-iam.yml").read_text()
+        step = workflow.split("      - name: Resolve trusted source", 1)[1]
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1].split("      - name:", 1)[0])
+        event = self.root / "event.json"
+        event.write_text('{"action":"opened"}')
+        env = dict(os.environ, GITHUB_EVENT_NAME="pull_request", TARGET="production",
+                   GITHUB_BASE_REF="production", GITHUB_HEAD_REF="main", GITHUB_REF="refs/pull/1/merge",
+                   GITHUB_SHA="a" * 40, GITHUB_EVENT_PATH=str(event), APPLY="true", EXPECTED="f" * 64,
+                   MERGED="false", MERGE_SHA="", GITHUB_OUTPUT=str(self.root / "out"),
+                   GITHUB_STEP_SUMMARY=str(self.root / "summary"))
+        denied = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True)
+        self.assertNotEqual(denied.returncode, 0)
+        self.assertIn("Production IAM writes require", denied.stderr)
+        preview = subprocess.run(["bash", "-c", script], env=env | {"APPLY": "false"},
+                                 capture_output=True, text=True)
+        self.assertEqual(preview.returncode, 0, preview.stderr)
 
     def test_adoption_gates_handoff_but_not_routine_changes(self):
         repo = self.root / "app"

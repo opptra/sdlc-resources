@@ -30,6 +30,6 @@ Those deploy workflows build `Dockerfile` inside the component directory. A comp
 Production promotion approvals select an exact Terraform artifact per component. Reviewed dispatches provide the run ID and artifact IDs. See [Terraform handoff and promotion](../../docs/infra-handoff.md).
 
 [terraform-iam.yml](terraform-iam.yml) previews delegated project grants and
-applies a matching plan after an environment reviewer approves the dispatch.
-The optional IAM gate checks that grants are current before app promotion.
+applies additions within the release run. Staging waits for environment review.
+Production writes occur after merge. Cleanup follows verified component applies.
 See [Deployment IAM in the feature PR](../../docs/infra-handoff.md#deployment-iam-in-the-feature-pr).

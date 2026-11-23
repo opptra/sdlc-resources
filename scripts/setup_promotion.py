@@ -131,16 +131,6 @@ def setup(
         "  id-token: write",
         "jobs:",
     ]
-    if with_iam:
-        lines[lines.index("  push:"):lines.index("  push:")] = [
-            "      apply_iam:",
-            "        description: Preview and apply deployment IAM with environment approval.",
-            "        type: boolean",
-            "        default: false",
-            "      iam_pr:",
-            "        description: Open main-to-production PR number for production IAM apply.",
-            "        type: string",
-        ]
     lines.extend([
         "  ci:",
         "    if: github.event_name == 'push' || github.event.action != 'closed'",
@@ -179,32 +169,34 @@ def setup(
             "        github.head_ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository &&",
             "        (github.event.action != 'closed' || github.event.pull_request.merged))",
             f"    uses: {iam_workflow}",
-            "    with:",
-            "      iam_pr: ${{ inputs.apply_iam && inputs.iam_pr || '' }}",
             "  iam-apply:",
             "    needs: iam-plan",
-            "    if: github.event_name == 'workflow_dispatch' && inputs.apply_iam && needs.iam-plan.outputs.pending == 'true'",
+            "    if: >-",
+            "      needs.iam-plan.outputs.pending == 'true' &&",
+            "      (github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||",
+            "        (github.event.action == 'closed' && github.event.pull_request.merged))",
             f"    uses: {iam_workflow}",
             "    with:",
-            "      iam_pr: ${{ inputs.iam_pr || '' }}",
             "      apply: true",
             "      fingerprint: ${{ needs.iam-plan.outputs.fingerprint }}",
             "  iam-ready:",
-            "    needs: iam-plan",
-            "    if: always() && !cancelled() && needs.iam-plan.result != 'skipped' && !inputs.apply_iam",
+            "    needs: [iam-plan, iam-apply]",
+            "    if: always() && !cancelled() && needs.iam-plan.result != 'skipped'",
             "    runs-on: ubuntu-latest",
             "    permissions: {}",
             "    env:",
             "      PLAN_RESULT: ${{ needs.iam-plan.result }}",
+            "      APPLY_RESULT: ${{ needs.iam-apply.result }}",
             "      PENDING: ${{ needs.iam-plan.outputs.pending }}",
+            "      PREVIEW: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' }}",
             "    steps:",
             "      - run: |",
             "          if [[ \"$PLAN_RESULT\" != success ]]; then",
             "            echo 'Deployment IAM preview failed. Open the IAM plan job for details.' >&2",
             "            exit 1",
             "          fi",
-            "          if [[ \"$PENDING\" != false ]]; then",
-            "            echo 'Deployment IAM is pending. Review the IAM plan and dispatch with apply_iam before planning or deploying the app.' >&2",
+            "          if [[ \"$PREVIEW\" != true && \"$PENDING\" != false && \"$APPLY_RESULT\" != success ]]; then",
+            "            echo 'Deployment IAM was not applied. Review the IAM apply job before retrying.' >&2",
             "            exit 1",
             "          fi",
         ])
@@ -239,6 +231,27 @@ def setup(
         if adopting:
             lines.append('      staging_mode: "reviewed"')
         lines.extend(f"      {name}: {json.dumps(value)}" for name, value in args.items())
+
+    if with_iam:
+        component_jobs = [f"terraform-{index}" for index in range(1, len(jobs) + 1)]
+        dependencies = ", ".join(component_jobs)
+        applied = " && ".join(f"needs.{job}.outputs.applied == 'true'" for job in component_jobs)
+        lines.extend([
+            "  iam-cleanup-plan:",
+            f"    needs: [{dependencies}]",
+            f"    if: {applied}",
+            f"    uses: {iam_workflow}",
+            "    with:",
+            "      phase: cleanup",
+            "  iam-cleanup-apply:",
+            "    needs: iam-cleanup-plan",
+            "    if: needs.iam-cleanup-plan.outputs.pending == 'true'",
+            f"    uses: {iam_workflow}",
+            "    with:",
+            "      phase: cleanup",
+            "      apply: true",
+            "      fingerprint: ${{ needs.iam-cleanup-plan.outputs.fingerprint }}",
+        ])
 
     workflows.mkdir(parents=True, exist_ok=True)
     scripts = dest / "scripts"
@@ -291,7 +304,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--replace-bootstrap-workflows", action="store_true",
                         help="Replace unchanged generated plan and deploy callers")
     parser.add_argument("--with-iam", action="store_true",
-                        help="Generate IAM declarations and the protected IAM steps in the promotion caller")
+                        help="Generate same-release IAM additions and verified cleanup; staging approval and production post-merge apply")
     args = parser.parse_args(argv)
     try:
         setup(args.manifest.resolve(), args.dest.resolve(), args.workflow_ref, args.replace_bootstrap_workflows, args.with_iam)

@@ -103,8 +103,9 @@ GitHub environment variables runs it once for each environment.
 1. Create `staging-iam-plan`, `staging-iam-apply`, `production-iam-plan` and
    `production-iam-apply` in the app repository. Restrict apply environments to
    their matching protected branches. Require a reviewer and prevent self-review
-   on both apply environments. This requires GitHub environment reviewers for
-   the repository. Protect changes to the promotion caller. Set up
+   on staging-iam-apply. Production IAM runs after the approved promotion PR
+   merges, so its environment does not need an additional reviewer. Staging
+   requires GitHub environment reviewers for the repository. Protect changes to the promotion caller. Set up
    the shared OIDC provider as described in [GCP bootstrap](gcp-bootstrap.md).
 2. Create one versioned GCS state bucket with uniform bucket-level access per
    environment and repository. Use a state project controlled by the IAM

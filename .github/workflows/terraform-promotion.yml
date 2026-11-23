@@ -68,6 +68,11 @@ on:
         type: string
         default: ""
 
+    outputs:
+      applied:
+        description: True only after an apply and its post-apply verification succeed
+        value: ${{ jobs.terraform.outputs.applied }}
+
 permissions:
   contents: read
   actions: read
@@ -198,6 +203,8 @@ jobs:
           echo "image=${image%:*}@$digest" >> "$GITHUB_OUTPUT"
 
   terraform:
+    outputs:
+      applied: ${{ steps.verified.outputs.applied }}
     needs: [backend, build]
     if: >-
       always() && !cancelled() && (needs.build.result == 'success' || needs.build.result == 'skipped') &&
@@ -532,3 +539,15 @@ jobs:
       - name: Completed staging release
         if: env.APPLY == 'true' && env.TARGET == 'staging' && steps.release.outputs.mode == 'release'
         run: echo 'The staging release and configured checks completed.'
+
+      - name: Record verified apply
+        id: verified
+        if: env.APPLY == 'true'
+        env:
+          POST_APPLY: ${{ inputs.post_apply }}
+        run: |
+          if [[ -n "$POST_APPLY" ]]; then
+            echo 'applied=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'IAM cleanup waits for a configured post_apply verification hook.' >> "$GITHUB_STEP_SUMMARY"
+          fi
