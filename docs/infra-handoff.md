@@ -21,7 +21,7 @@ Run `odlc status --json` to list ownership, Terraform roots, and the standard pr
 
 The reusable workflow supports Cloud Run services and jobs. VM workers use their existing deployment path. Config-only repos use CI without Terraform.
 
-1. Get a published full commit SHA from `opptra/sdlc-resources` containing the reusable workflow. Set the ownership field. Add `workflow_call` under `on` in an older app's `.github/workflows/ci.yml` so the staging push can run the same checks.
+1. Get a published full commit SHA from `opptra/sdlc-resources` containing the reusable workflow. Set the ownership field. Add `workflow_call` under `on` in an older app's `.github/workflows/ci.yml` so staging can run the same checks.
 2. Run `odlc setup-promotion service.yaml . --workflow-ref <published-sha>`. For a fresh scaffold, pass `--replace-bootstrap-workflows` to remove the unchanged generated plan and deploy callers. For an existing app with customized callers, record their actual state locations and release behavior, then retire the callers explicitly in the same PR. Keep only one deploy path per environment.
 3. Check the generated `staging_bucket`, `staging_prefix`, `production_bucket`, and `production_prefix` against the actual backend. Defaults match the standard legacy naming. Copy existing values exactly for an already-managed stack, including custom projects or prefixes. Keep separate state for each component and environment. A release with an empty bucket or prefix for its target stops before cloud authentication. Run `terraform fmt -recursive` from the app root. Commit the Terraform provider lock files and the generated caller and helper scripts.
 4. Provision separate state, databases, and immutable Docker registries for staging and production. The default registry name is `apps-release` in each environment's project. A source tree tag allows reuse within that environment. Terraform and migrations consume the resolved image digest.
@@ -32,24 +32,26 @@ The reusable workflow supports Cloud Run services and jobs. VM workers use their
 | `staging-build`, `production-build` | Build and publish candidate images in that environment's registry. Restrict production candidate builds to same-repository promotion PRs from `main`. |
 | `staging-plan`, `production-plan` | Read that environment's state and resource metadata. Allow state-lock operations separately from writes to state. |
 | `staging`, `production` | Apply Terraform and run migrations for that environment. Restrict to the corresponding branch. |
-| `production-recovery` | Production apply and migration permissions. Restrict to the protected production branch and configure required reviewers. The workflow verifies the approval before proceeding. |
+| `production-recovery` (legacy callers) | Production apply and migration permissions. Restrict to the protected production branch and configure required reviewers. The workflow verifies the approval before proceeding. |
 
 Seed required values in the target Secret Manager before deploying a workload that mounts them. If needed, provision secret containers in a prerequisite change. Keep sensitive plan data in the runner. The uploaded review record contains a fingerprint and the candidate image reference.
 
 ## Deploy
 
 - **Integration.** PRs into `main` run app CI and Terraform formatting and validation with the backend disabled. Merges into `main` publish no images and deploy nothing.
-- **Staging.** Push to `staging` to build a staging candidate. The caller's `staging_mode` defaults to `auto` for established apps and `reviewed` during adoption. In reviewed mode, inspect the plan and dispatch the workflow on `staging` with that run's ID in `reviewed_run` and its component artifact IDs in `reviewed_artifacts`, separated by spaces. The developer can approve their own staging apply. The dispatch checks the current commit, digest, and plan.
+- **Staging with deployment IAM.** Open a same-repository candidate PR into `staging`. Follow the [reviewed promotion process](#deployment-iam-in-the-feature-pr).
+- **Staging with a legacy promotion caller.** Push to `staging` to build a staging candidate. The caller's `staging_mode` defaults to `auto` for established apps and `reviewed` during adoption. In reviewed mode, inspect the plan and dispatch the workflow on `staging` with that run's ID in `reviewed_run` and its component artifact IDs in `reviewed_artifacts`, separated by spaces. The developer can approve their own staging apply. The dispatch checks the current commit, digest, and plan.
 - **Production.** Open a PR from `main` to `production`. The workflow builds or resolves its own candidates, displays their digests and the production plan, and records the proposed source tree and plan fingerprint. After the selected run succeeds, copy one line in the form `Terraform artifact: 123456` per component from the run summary into your PR approval. Then merge to release those exact digests. To select a newer attempt, replace the approval with the new IDs. Resolve conflicting selections before merging. A fresh plan must match before migrations or Terraform apply. Routine production releases use only production inputs. Closed PRs leave their candidate images in the registry.
-- **Production plan drift.** Dispatch the workflow on `production` with `reviewed_run` empty. It reuses the merged PR's candidate digest and shows a fresh plan. Review it, then dispatch with the recovery plan run ID and the exact recovery artifact IDs. A reviewer approves the `production-recovery` environment and the workflow checks the plan again. If the source tree changed or the original receipt is unavailable, use a new production PR.
+- **Production plan drift with deployment IAM.** Open a fresh `main` to `production` PR. If both branches already have the same content, add a tracked release note to `main` through the normal PR process so there is a new change to promote. Review the new candidate and plans before merging.
+- **Production plan drift with a legacy promotion caller.** Dispatch the workflow on `production` with `reviewed_run` empty. It reuses the merged PR's candidate digest and shows a fresh plan. Review it, then dispatch with the recovery plan run ID and the exact recovery artifact IDs. A reviewer approves the `production-recovery` environment and the workflow checks the plan again. If the source tree changed or the original receipt is unavailable, use a new production PR.
 
 Set the optional `migrate` input to an app script that runs pending migrations with `RELEASE_IMAGE` against the current environment and waits for success. Use `pre_apply` for app-specific backup or maintenance steps before migration. A failure stops rollout. Test migration changes against disposable Postgres in the app's CI. In multi-component apps, use workflow job dependencies so Terraform applies for dependent schedules and services wait for the component that runs migrations. Verify candidate health before traffic shifts when the app uses a separate rollout.
 
 ## Adopt a live production app
 
 1. Compare the union of the live production inventory, the legacy deploy entry points and their scripts, and the proposed Terraform and workflow. Verify live settings with read-only access. Record gaps as unverified until they are resolved. The reviewer checks completeness and approves intentional differences.
-2. Generate initial files, set `infra_management: adoption`, then run `odlc setup-promotion service.yaml . --workflow-ref <published-sha>`. Run `odlc sync --upgrade` with the updated CLI to install the current agent rules. During adoption, sync preserves the edited Terraform and workflows while the replacement can deploy to staging. Its production jobs remain disabled. Keep the live production deploy path available during rehearsal. Retire old staging callers on the migration branch and prepare to disable the legacy production writer at cutover.
-3. Land the caller on the default branch with the marker still in `adoption` so GitHub can accept a manual staging dispatch. Configure production-only import inputs before the rehearsal so they are included in the reviewed tree. Push the proposed release tree to `staging`. Review the plan and dispatch the staging apply. Run the full release and verify the items in the report. Where applicable, demonstrate backup before migration, migration before deployment, and candidate health before traffic switch. Test the failure paths that should stop the switch and link the evidence. A plan or a run holding the staging image fixed is insufficient.
+2. Generate initial files, set `infra_management: adoption`, then run `odlc setup-promotion service.yaml . --workflow-ref <published-sha> --with-iam` for reviewed promotion PRs. Run `odlc sync --upgrade` with the updated CLI to install the current agent rules. During adoption, sync preserves the edited Terraform and workflows while the replacement can deploy to staging. Its production jobs remain disabled. Keep the live production deploy path available during rehearsal. Retire old staging callers on the migration branch and prepare to disable the legacy production writer at cutover.
+3. Land the caller on the default branch with the marker still in `adoption`. Configure production-only import inputs before the rehearsal so they are included in the reviewed tree. Open a candidate PR into `staging`, review the plans and merge to apply. For a legacy caller without deployment IAM, use its existing reviewed staging dispatch. Run the full release and verify the items in the report. Where applicable, demonstrate backup before migration, migration before deployment, and candidate health before traffic switch. Test the failure paths that should stop the switch and link the evidence. A plan or a run holding the staging image fixed is insufficient.
 4. Record the parity review and completed staging apply run in `docs/terraform-adoption.json`. Change the marker to `app-owned` in the handoff PR. Run `odlc adoption-check --repo <owner/repository>` with GitHub Actions read access. The generated caller checks this transition and checks the first production promotion. Require the caller's adoption check for the handoff PR. The checked tree can differ from the rehearsal only in the report and the ownership marker. Later releases use ordinary CI once the target branch is app-owned.
 
 The report has a top-level `review` link, a `staging` object with integer `run_id` and full Git `commit`, and an `items` array. Cover `workloads`, `triggers`, `runtime`, `identity`, `secrets`, `data`, and `release`. Record one row per item. A category with verified absence can use `not-applicable` with evidence and a reason. Use `verified` or `intentional-difference` for covered items. Give differences and retirements a reason. Record secret references only.
@@ -90,17 +92,13 @@ When upgrading a caller to exact artifact selection, add a string `reviewed_arti
 An application PR can change app code, resources, and deployment IAM together.
 Use `odlc setup-promotion service.yaml . --workflow-ref <published-sha> --with-iam`
 when generating a new promotion caller. For an existing promotion caller,
-generate an example in a separate copy, then port its
-`iam-plan`, `iam-apply`, `iam-ready`, cleanup jobs, and component dependencies to the
-checked-in caller. Remove the obsolete `apply_iam` and `iam_pr` inputs if
-upgrading a caller from the draft IAM flow. Preserve the app's existing state settings, component paths,
-and hooks. Install the updated bind scripts and their shared helper from the
-same SDLC revision, or run them from that revision's SDLC checkout. Configure the
-[protected environments and state](bind.md#bind-the-deployment-iam-identities)
-before enabling the flow. First land the caller with empty declarations.
-Protect production merges with peer review and the app plan checks. Production
-IAM uses that merge approval. Staging IAM uses a teammate approval on the
-`staging-iam-apply` environment within the staging release run.
+generate an example in a separate copy, then port its PR triggers, review check,
+preflight, IAM additions and cleanup jobs, and component dependencies. Remove
+direct staging push and manual write triggers from the upgraded caller.
+Preserve existing state settings, component paths, and hooks. Install the bind
+scripts and versioned helpers from the same SDLC revision. First land the caller
+with empty declarations, then configure [the environment identities and branch rules](bind.md#bind-the-deployment-iam-identities).
+This works on GitHub Team for private repositories.
 
 The caller reads `infra/iam/staging.json` and `infra/iam/production.json`.
 Each entry is an additive project grant. Keep its key stable. For example:
@@ -122,24 +120,24 @@ reviewed setup by the administrator of that resource. The shared IAM workflow
 currently handles project grants. Review dependency removal before retiring a
 grant that a live workload still needs.
 
-1. Include application resources and deployment grants in one feature PR.
-   Push the candidate to staging. The run previews additions while retaining
-   existing access. When additions are needed, a teammate approves the staging
-   IAM job in Actions. The same release then builds, plans and deploys.
-2. Open the usual `main` to `production` PR. It previews grants and app
-   changes without modifying IAM. Approve the exact app artifacts after all
-   required checks pass. A missing planner read permission is a bootstrap
-   prerequisite, which an administrator must resolve before review can finish.
-3. After merge, GitHub replans the prerequisite grants and applies a matching
-   plan using the production IAM identity. It then builds or resolves images,
-   verifies the reviewed app receipt, and deploys.
-4. After every component has successfully applied and completed a configured
-   `post_apply` hook, GitHub previews and applies cleanup of retired project
-   grants. A failure, preview-only run, or missing verification hook retains
-   old grants. Staging cleanup also requires its environment reviewer.
-5. For reviewed staging and production recovery dispatches, use the existing
-   `reviewed_run` and `reviewed_artifacts` inputs. IAM uses the current
-   protected branch revision. There is no separate IAM dispatch input.
+1. Put the application and grant changes on the same feature branch. Open a
+   candidate PR into `staging`. The workflow shows the app changes, IAM additions,
+   and grants planned for retirement. It can publish candidate images while the
+   Terraform and IAM preview jobs use plan identities.
+2. Once all checks pass, a teammate includes one `IAM artifact: <id>` line and
+   one `Terraform artifact: <id>` line per component in the PR approval. Copy
+   the lines from that successful run. Merge the PR to deploy. The same sequence
+   applies to a `main` to `production` PR with its own environment-specific review.
+   A missing planner read permission needs administrator setup before review.
+3. After merge, CI checks all reviewed application plans before applying IAM.
+   It then rechecks and applies the reviewed additions, deploys the app using
+   the reviewed image digest, and runs its configured checks.
+4. When every component applies and passes its `post_apply` hook, the workflow
+   may remove only the reviewed grants. Failed verification or a missing hook
+   retains old grants. A failed or superseded release can leave new grants in
+   place. Review those grants as part of recovery.
+5. If the approved plan changes, open a fresh promotion PR for that environment.
+   There is no deployment-approval click or manual write dispatch on this path.
 
 Keep grant keys stable. The pipeline rejects changing a role or member under
 an existing key, or renaming a key for the same binding. For changed access,
@@ -147,12 +145,12 @@ add a new key and remove the obsolete key in the same feature PR. The additions
 phase retains the obsolete grant until verified cleanup. A pure key rename
 requires an administrator-coordinated Terraform state move.
 
-The IAM apply checks the same commit and plan fingerprint as its preview
-within the release run, and stops if the protected branch advances. Production
-PR and merged revisions are separately planned against their actual source.
-The merge review authorizes declarations, while the app receipt checks that
-the final application changes match the reviewed plan. An abandoned or failed
-release can leave newly added grants in place. Review them in the next release.
+The release checks that the approved artifacts came from the successful PR run
+for the reviewed head. It compares the merged tree and the fresh app and IAM
+plans before applying. If the protected branch advances, the older release
+stops. The dedicated IAM flow owns project grants. App-owned resource
+revocations still use the app plan policy and require a separately reviewed
+path when that policy blocks a deletion.
 
 ### New and aligned repositories
 

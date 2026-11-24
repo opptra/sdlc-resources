@@ -2,7 +2,7 @@ Read the root `service.yaml` and the Product contract in `AGENTS.md`. Check `inf
 
 main is the default branch. Cut feature branches from main. Open the pull request into main. Merging to main does not deploy.
 
-A push to staging starts the staging workflow. In reviewed mode, inspect the plan before dispatching the staging apply with the reviewed run ID. In app-owned promotion, PRs into main validate Terraform with the backend disabled. A PR from main into production reviews the production image digests and plan. The merge deploys those digests if the fresh plan matches. Routine production releases use production inputs and run independently of staging.
+Check the active promotion caller. With deployment IAM, release a same-repository candidate through a reviewed PR into staging. Open a separate PR from main into production. Each approval selects the successful environment-specific IAM and Terraform artifacts. CI applies after merge. Legacy callers deploy staging on push and some require a reviewed dispatch.
 
 Do not add deploy.sh. Do not run gcloud run deploy. Do not commit a .env or a credential. Do not tag an image latest. Do not log secret values, bearer tokens, signed download URLs, or customer PII (email bodies, invoice text, phone numbers). Log ticket or record IDs, run IDs, and exit codes.
 
@@ -32,7 +32,7 @@ A feature writes an OpenSpec under openspec/ before any product code and syncs t
 
 Use the recorded generator for bootstrap. After handoff, `odlc sync` only refreshes managed agent rules. When the recorded generator predates handoff, use the updated CLI with `odlc sync --upgrade` once, after committing the ownership marker to the app branch. Check the resulting rules diff.
 
-After the pull request into main is open, print the ship card: the command `git push --force-with-lease origin <branch>:staging`, that main is not merged into staging, and that production is a pull request from main into production. Push staging only when the developer asks. A rollback is a revert on main, then the same card. Do not redeploy an older image.
+After the pull request into main is open, print the ship card for the active caller. For protected promotion, tell the developer to open a staging PR and review the artifacts. For a legacy caller, show its staging push or reviewed dispatch. Production uses a PR from main into production. A rollback is a revert on main followed by the same release path.
 
 Use a two-gate confirmation flow:
 1. **Plan / Spec Gate:** Before editing product files, present the plan (plus the OpenSpec summary for a feature, or root cause and failing reproduction test for a bug) and wait for a yes.

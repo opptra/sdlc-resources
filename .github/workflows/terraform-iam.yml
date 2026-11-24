@@ -29,6 +29,13 @@ permissions:
 
 jobs:
   iam:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (github.base_ref == 'staging' || (github.base_ref == 'production' && github.head_ref == 'main')) &&
+      (github.event.action != 'closed' || github.event.pull_request.merged) &&
+      (!inputs.apply || (github.event.action == 'closed' && github.event.pull_request.merged &&
+       github.ref == format('refs/heads/{0}', github.base_ref)))
     runs-on: ubuntu-latest
     environment: ${{ format('{0}-iam-{1}', (github.base_ref == 'production' || github.ref == 'refs/heads/production') && 'production' || 'staging', inputs.apply && 'apply' || 'plan') }}
     outputs:
@@ -57,57 +64,56 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
+          [[ "$GITHUB_EVENT_NAME" == pull_request && "$GITHUB_BASE_REF" == "$TARGET" ]]
+          [[ "$TARGET" == staging || ( "$TARGET" == production && "$GITHUB_HEAD_REF" == main ) ]]
+          jq -e --arg repo "$GITHUB_REPOSITORY" '.pull_request.head.repo.full_name == $repo' "$GITHUB_EVENT_PATH" >/dev/null
+          action=$(jq -er .action "$GITHUB_EVENT_PATH")
           sha=$GITHUB_SHA
-          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
-            [[ "$TARGET" == production && "$GITHUB_BASE_REF" == production && "$GITHUB_HEAD_REF" == main ]]
-            if [[ "$(jq -r .action "$GITHUB_EVENT_PATH")" == closed ]]; then
-              [[ "$MERGED" == true && "$GITHUB_REF" == refs/heads/production ]]
-              sha=$MERGE_SHA
-            fi
-          elif [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
-            [[ "$GITHUB_REF" == "refs/heads/$TARGET" ]]
-
-          else
-            [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/heads/staging ]]
+          if [[ "$action" == closed ]]; then
+            [[ "$MERGED" == true && "$GITHUB_REF" == "refs/heads/$TARGET" && "$MERGE_SHA" == "$GITHUB_SHA" ]]
+            sha=$MERGE_SHA
           fi
           [[ "$sha" =~ ^[a-f0-9]{40}$ ]]
           if [[ "$APPLY" == true ]]; then
-            [[ "$EXPECTED" =~ ^[a-f0-9]{64}$ ]]
-            if [[ "$TARGET" == production ]]; then
-              if ! { [[ "$GITHUB_EVENT_NAME" == pull_request &&
-                        "$(jq -r .action "$GITHUB_EVENT_PATH")" == closed &&
-                        "$MERGED" == true && "$GITHUB_REF" == refs/heads/production ]] ||
-                     [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$GITHUB_REF" == refs/heads/production ]]; }; then
-                echo 'Production IAM writes require a merged promotion or its recovery run.' >&2
-                exit 1
-              fi
-              # Check peer approval before any production IAM write, including recovery.
-              if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
-                PR_NUMBER=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha/pulls" |
-                  jq -er --arg sha "$sha" '
-                    [.[] | select(.merged_at and .merge_commit_sha == $sha and
-                      .base.ref == "production" and .head.ref == "main")] |
-                    if length == 1 then .[0].number else error("No unique merged promotion PR") end')
-              fi
-              pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")
-              head=$(jq -er '.head.sha' <<<"$pr")
-              author=$(jq -er '.user.login' <<<"$pr")
-              merged_at=$(jq -er '.merged_at' <<<"$pr")
-              gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" |
-                jq -e --arg head "$head" --arg author "$author" --arg merged "$merged_at" '
-                  add | map(select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")) |
-                  group_by(.user.id) | map(max_by(.id)) |
-                  any(.[]; .state == "APPROVED" and .commit_id == $head and
-                    .user.login != $author and .submitted_at <= $merged)' >/dev/null
-            else
-              gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/approvals" |
-                jq -e --arg name staging-iam-apply --arg actor "$GITHUB_ACTOR" '
-                  any(.[]; .state == "approved" and .user.login != $actor
-                    and any(.environments[]; .name == $name))' >/dev/null
-            fi
+            [[ "$action" == closed && "$EXPECTED" =~ ^[a-f0-9]{64}$ ]] ||
+              { echo 'IAM writes require an approved promotion merge.' >&2; exit 1; }
           fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "### IAM source: $sha ($TARGET)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Resolve approved IAM plan
+        if: inputs.apply
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_MERGED_AT: ${{ github.event.pull_request.merged_at }}
+        run: |
+          set -euo pipefail
+          reviews=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews")
+          selections=$(jq -r --arg head "$PR_HEAD" --arg author "$PR_AUTHOR" --arg merged "$PR_MERGED_AT" '
+            add | map(select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")) |
+            group_by(.user.id) | map(max_by(.id)) |
+            .[] | select(.state == "APPROVED" and .commit_id == $head and .user.login != $author and .submitted_at <= $merged) |
+            . as $review | .body // "" | split("\n")[] |
+            capture("^IAM artifact: (?<id>[1-9][0-9]*)[[:space:]]*$") | [.id, $review.submitted_at] | @tsv
+          ' <<<"$reviews")
+          id=$(cut -f1 <<<"$selections" | sort -u)
+          [[ "$id" =~ ^[1-9][0-9]*$ ]] || { echo 'Approve exactly one IAM artifact on the promotion PR.' >&2; exit 1; }
+          artifact=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id")
+          name=$(jq -er 'select(.expired == false) | .name' <<<"$artifact")
+          [[ "$name" =~ ^iam-review-$PR_NUMBER-([0-9]+)-([0-9]+)$ ]]
+          run_id=${BASH_REMATCH[1]} attempt=${BASH_REMATCH[2]}
+          jq -e --arg run "$run_id" '(.workflow_run.id | tostring) == $run' <<<"$artifact" >/dev/null
+          workflow_ref=${GITHUB_WORKFLOW_REF%@*}
+          workflow_path=${workflow_ref#"$GITHUB_REPOSITORY/"}
+          ready=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/attempts/$attempt" |
+            jq -er --arg path "$workflow_path" --arg head "$PR_HEAD" '
+              select(.path == $path and .event == "pull_request" and .head_sha == $head and
+                     .conclusion == "success") | .updated_at')
+          awk -v ready="$ready" '$2 >= ready { approved = 1 } END { exit !approved }' <<<"$selections" ||
+            { echo 'Approve the IAM artifact after its run attempt succeeds.' >&2; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$RUNNER_TEMP/iam-review.zip"
+          unzip -p "$RUNNER_TEMP/iam-review.zip" iam-review.json > "$RUNNER_TEMP/iam-review.json"
       - name: Read declarations and prepare Terraform
         env:
           SOURCE_SHA: ${{ steps.source.outputs.sha }}
@@ -175,10 +181,9 @@ jobs:
       - name: Plan or apply reviewed grants
         id: terraform
         working-directory: ${{ runner.temp }}/iam
-        env:
-          SOURCE_SHA: ${{ steps.source.outputs.sha }}
         run: |
           set -euo pipefail
+          printf '%s' "$(jq -cS . terraform.tfvars.json)" | sha256sum | cut -d ' ' -f1 > declarations.hash
           terraform init -input=false -backend-config="bucket=$BUCKET" -backend-config=prefix=deployment-iam
           [[ "$PHASE" == additions || "$PHASE" == cleanup ]]
           # Refresh the current state before computing the temporary union.
@@ -207,6 +212,10 @@ jobs:
             then error("Use a new key for a changed grant so old access survives deployment")
             else $desired[0] + {grants:($old + $new)} end
           ' current-state.json > additions.tfvars.tmp
+          jq --slurpfile desired terraform.tfvars.json '
+            .grants | with_entries(select($desired[0].grants[.key] == null)) |
+            map_values({member,role})
+          ' additions.tfvars.tmp > retirements.json
           if [[ "$PHASE" == additions ]]; then
             {
               echo '### Existing grants retained until verified cleanup'
@@ -237,13 +246,38 @@ jobs:
               { echo 'An additions plan cannot remove access.' >&2; exit 1; }
           fi
           fingerprint=$(
-            jq -cS --arg sha "$SOURCE_SHA" --arg phase "$PHASE" --arg target "$TARGET/$PROJECT/$BUCKET" '
-              {sha:$sha,phase:$phase,target:$target,terraform_version,resource_changes,resource_drift,variables}
+            jq -cS --arg declarations "$(cat declarations.hash)" --arg phase "$PHASE" \
+              --arg target "$TARGET/$PROJECT/$BUCKET" --slurpfile retirements retirements.json '
+              {declarations:$declarations,phase:$phase,target:$target,terraform_version,
+               resource_changes,resource_drift,variables,retirements:$retirements[0]}
             ' plan.json | sha256sum | cut -d ' ' -f1
           )
+          if [[ "$APPLY" == true && "$PHASE" == cleanup ]]; then
+            jq -e --slurpfile approved "$RUNNER_TEMP/iam-review.json" '
+              all(.resource_changes[]?;
+                .change.actions == ["no-op"] or
+                (.change.actions == ["delete"] and (.index | type == "string") and
+                 (.index as $key | .change.before as $before |
+                  $approved[0].retirements[$key] == ($before | {member,role}))))
+            ' plan.json >/dev/null ||
+              { echo 'IAM cleanup contains a change outside the approved removals.' >&2; exit 1; }
+          fi
+          if [[ "$APPLY" == false && "$PHASE" == additions ]]; then
+            jq -n --arg fingerprint "$fingerprint" --arg declarations "$(cat declarations.hash)" \
+              --slurpfile retirements retirements.json \
+              '{fingerprint:$fingerprint,declarations:$declarations,retirements:$retirements[0]}' > "$RUNNER_TEMP/iam/iam-review.json"
+          fi
           pending=false
           if [[ "$result" == 2 ]] || jq -e 'any(.resource_changes[]?; .change.importing != null)' plan.json >/dev/null; then
             pending=true
+          fi
+          if [[ "$APPLY" == true && "$PHASE" == additions ]]; then
+            jq -e --arg expected "$fingerprint" --arg pending "$pending" \
+              --arg declarations "$(cat declarations.hash)" --slurpfile retirements retirements.json '
+              .fingerprint == $expected or
+              ($pending == "false" and .declarations == $declarations and .retirements == $retirements[0])
+            ' "$RUNNER_TEMP/iam-review.json" >/dev/null ||
+              { echo 'IAM plan differs from the approved PR. Open a fresh promotion PR.' >&2; exit 1; }
           fi
           printf 'fingerprint=%s\npending=%s\n' "$fingerprint" "$pending" >> "$GITHUB_OUTPUT"
           {
@@ -265,3 +299,18 @@ jobs:
               terraform apply -input=false -lock-timeout=120s grants.plan
             fi
           fi
+      - name: Publish IAM plan
+        if: >-
+          !inputs.apply && inputs.phase == 'additions' && github.event.action != 'closed'
+        id: review
+        uses: actions/upload-artifact@v4
+        with:
+          name: iam-review-${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/iam/iam-review.json
+          if-no-files-found: error
+      - name: Show IAM review reference
+        if: steps.review.outcome == 'success'
+        env:
+          ARTIFACT_ID: ${{ steps.review.outputs.artifact-id }}
+        run: |
+          printf 'Include this line in the promotion PR approval after the run succeeds.\n\nIAM artifact: %s\n' "$ARTIFACT_ID" >> "$GITHUB_STEP_SUMMARY"

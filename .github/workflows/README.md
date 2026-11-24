@@ -11,7 +11,7 @@ An app does not copy these files. [scripts/generate.py](../../scripts/generate.p
 | [config-ci.yml](config-ci.yml) | Pull request, for a config-only repo | Checks that `service.yaml` and `README.md` exist |
 | [sdlc-check.yml](sdlc-check.yml) | Pull request | Checks the manifest, the rule stamp, and `odlc status` when the app has that CLI |
 | [terraform-plan.yml](terraform-plan.yml) | Pull request | Plans staging, or production when the pull request targets `production`. Comments a short summary. The full plan is on the Actions run. Changes nothing. |
-| [terraform-promotion.yml](terraform-promotion.yml) | An app opts in with a pinned promotion caller | Plans staging and production, applies staging on push, and applies the reviewed production plan after merge |
+| [terraform-promotion.yml](terraform-promotion.yml) | An app opts in with a pinned promotion caller | Plans and applies reviewed staging and production PRs for deployment IAM callers. Legacy callers keep their staging push path. |
 | [deploy-cloud-run.yml](deploy-cloud-run.yml) | Push to `staging`, or merge into `production`, for an API | Creates secret shells, stops when a mounted secret has no version, builds the image, applies Terraform |
 | [deploy-job.yml](deploy-job.yml) | Same branches, for a job | Same secret check, then build and apply. A new image does not start a run. |
 | [deploy-worker.yml](deploy-worker.yml) | Same branches, for a VM worker | Pushes an image. It does not restart the VM. |
@@ -27,9 +27,9 @@ Those deploy workflows build `Dockerfile` inside the component directory. A comp
 | [pr.yml](pr.yml) | Runs the generator tests and the docs link check on a pull request |
 | [docs.yml](docs.yml) | Publishes `docs/` to GitHub Pages from `main` |
 
-Production promotion approvals select an exact Terraform artifact per component. Reviewed dispatches provide the run ID and artifact IDs. See [Terraform handoff and promotion](../../docs/infra-handoff.md).
+Protected promotion approvals select one IAM artifact and an exact Terraform artifact per component. Legacy reviewed dispatches provide the run ID and artifact IDs. See [Terraform handoff and promotion](../../docs/infra-handoff.md).
 
 [terraform-iam.yml](terraform-iam.yml) previews delegated project grants and
-applies additions within the release run. Staging waits for environment review.
-Production writes occur after merge. Cleanup follows verified component applies.
+applies approved additions after a protected staging or production PR merges.
+Cleanup follows verified component applies and is limited to reviewed grants.
 See [Deployment IAM in the feature PR](../../docs/infra-handoff.md#deployment-iam-in-the-feature-pr).

@@ -43,6 +43,14 @@ on:
         description: Exact live image reference for an import-only production run
         type: string
         default: ""
+      protected_promotions:
+        description: Require a reviewed promotion PR for staging and production
+        type: boolean
+        default: false
+      preflight:
+        description: Recheck all reviewed application changes before IAM writes
+        type: boolean
+        default: false
       staging_mode:
         description: auto applies on push, reviewed publishes a plan for explicit apply
         type: string
@@ -103,13 +111,18 @@ jobs:
 
   backend:
     if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/staging') ||
-       (github.event_name == 'workflow_dispatch' &&
-        (github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/production')) ||
-       (github.event_name == 'pull_request' && github.base_ref == 'production' && github.head_ref == 'main' &&
-        github.event.pull_request.head.repo.full_name == github.repository &&
-        (github.event.action != 'closed' ||
-         (github.event.pull_request.merged && github.ref == 'refs/heads/production')))
+      (!inputs.protected_promotions &&
+        ((github.event_name == 'push' && github.ref == 'refs/heads/staging') ||
+         (github.event_name == 'workflow_dispatch' &&
+          (github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/production')))) ||
+      (github.event_name == 'pull_request' &&
+       ((github.base_ref == 'production' && github.head_ref == 'main') ||
+        (inputs.protected_promotions && github.base_ref == 'staging')) &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       (!inputs.preflight || github.event.action == 'closed') &&
+       (github.event.action != 'closed' ||
+        (github.event.pull_request.merged &&
+         github.ref == format('refs/heads/{0}', github.base_ref))))
     permissions: {}
     runs-on: ubuntu-latest
     outputs:
@@ -147,11 +160,12 @@ jobs:
   build:
     needs: backend
     if: >-
-      ((github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.reviewed_run == '')) &&
-       github.ref == 'refs/heads/staging' && inputs.staging_adoption_image == '') ||
-      (github.event_name == 'pull_request' && github.event.action != 'closed' &&
-        github.base_ref == 'production' && github.head_ref == 'main' &&
-        github.event.pull_request.head.repo.full_name == github.repository && inputs.adoption_image == '')
+      needs.backend.result == 'success' &&
+      ((github.event_name != 'pull_request' && github.ref == 'refs/heads/staging' &&
+        inputs.reviewed_run == '' && inputs.staging_adoption_image == '') ||
+       (github.event_name == 'pull_request' && github.event.action != 'closed' &&
+        ((github.base_ref == 'production' && inputs.adoption_image == '') ||
+         (github.base_ref == 'staging' && inputs.staging_adoption_image == ''))))
     runs-on: ubuntu-latest
     environment: ${{ github.base_ref == 'production' && 'production-build' || 'staging-build' }}
     outputs:
@@ -176,7 +190,7 @@ jobs:
           DOCKERFILE: ${{ inputs.dockerfile }}
         run: |
           set -euo pipefail
-          tree=$(git rev-parse HEAD^{tree})
+          tree=$(git rev-parse 'HEAD^{tree}')
           python3 scripts/render_tfvars.py --manifest "$MANIFEST" --environment "$TARGET" \
             --staging-project "$STAGING_PROJECT" --artifact-repo "$ARTIFACT_REPO" \
             --sha "$tree" --out "$RUNNER_TEMP/build.tfvars.json"
@@ -213,9 +227,9 @@ jobs:
     environment: >-
       ${{ (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/production' &&
           inputs.reviewed_run != '' && 'production-recovery') ||
-          (github.event.action == 'closed' && 'production') ||
+          (github.event.action == 'closed' && !inputs.preflight && github.base_ref == 'production' && 'production') ||
           (github.base_ref == 'production' || github.ref == 'refs/heads/production') && 'production-plan' ||
-          ((github.event_name == 'push' && inputs.staging_mode == 'auto') || github.event.action == 'closed' || (github.event_name == 'workflow_dispatch' && inputs.reviewed_run != '')) && 'staging' || 'staging-plan' }}
+          ((github.event_name == 'push' && inputs.staging_mode == 'auto') || (github.event.action == 'closed' && !inputs.preflight) || (github.event_name == 'workflow_dispatch' && inputs.reviewed_run != '')) && 'staging' || 'staging-plan' }}
     concurrency:
       group: >-
         ${{ (github.event.action == 'closed' || (github.event_name == 'workflow_dispatch' && inputs.reviewed_run != '')) &&
@@ -227,19 +241,22 @@ jobs:
       COMPONENT: ${{ inputs.component }}
       MANIFEST: ${{ inputs.manifest }}
       TARGET: ${{ (github.base_ref == 'production' || github.ref == 'refs/heads/production') && 'prod' || 'staging' }}
-      APPLY: ${{ ((github.event_name == 'push' && inputs.staging_mode == 'auto') || github.event.action == 'closed' || (github.event_name == 'workflow_dispatch' && inputs.reviewed_run != '')) }}
+      APPLY: ${{ !inputs.preflight && ((github.event_name == 'push' && inputs.staging_mode == 'auto') || github.event.action == 'closed' || (github.event_name == 'workflow_dispatch' && inputs.reviewed_run != '')) }}
       BUCKET: ${{ needs.backend.outputs.bucket }}
       PREFIX: ${{ needs.backend.outputs.prefix }}
       STAGING_PROJECT: ${{ inputs.staging_project }}
       ARTIFACT_REPO: ${{ inputs.artifact_repo }}
       STAGING_ADOPTION_IMAGE: ${{ inputs.staging_adoption_image }}
       PRODUCTION_ADOPTION_IMAGE: ${{ inputs.adoption_image }}
+      PREFLIGHT: ${{ inputs.preflight }}
+      PROTECTED_PROMOTIONS: ${{ inputs.protected_promotions }}
       STAGING_MODE: ${{ inputs.staging_mode }}
       REVIEWED_RUN: ${{ inputs.reviewed_run }}
       REVIEWED_ARTIFACTS: ${{ inputs.reviewed_artifacts }}
       BUILT_IMAGE: ${{ needs.build.outputs.image }}
       GH_TOKEN: ${{ github.token }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
       PR_HEAD: ${{ github.event.pull_request.head.sha }}
       PR_MERGED_AT: ${{ github.event.pull_request.merged_at }}
       TF_IN_AUTOMATION: "true"
@@ -272,7 +289,7 @@ jobs:
           for path in "$infra" "$manifest"; do
             [[ "$path" == "$GITHUB_WORKSPACE/"* ]] || exit 1
           done
-          tree=$(git rev-parse HEAD^{tree})
+          tree=$(git rev-parse 'HEAD^{tree}')
           key=$(printf '%s' "$COMPONENT" | sha256sum | cut -c1-16)
           adoption_image=$STAGING_ADOPTION_IMAGE
           [[ "$TARGET" != prod ]] || adoption_image=$PRODUCTION_ADOPTION_IMAGE
@@ -281,7 +298,7 @@ jobs:
             mode=adopt
           fi
           artifact="terraform-review-$PR_NUMBER-$key"
-          if [[ "$TARGET" == staging ]]; then
+          if [[ "$TARGET" == staging && "$PROTECTED_PROMOTIONS" != true ]]; then
             artifact="terraform-staging-$key"
           elif [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
             artifact="terraform-recovery-$key"
@@ -317,7 +334,7 @@ jobs:
           image=$BUILT_IMAGE
           select_receipt() {
             local ids=$1 expected_run=$2 prefix=$3 artifact id name run attempt
-            local -a selected=()
+            local -a matches=()
             for id in $ids; do
               [[ "$id" =~ ^[1-9][0-9]*$ ]] || return 1
               artifact=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id") || return 1
@@ -328,14 +345,14 @@ jobs:
                 [[ -z "$expected_run" || "$run" == "$expected_run" ]] || return 1
                 jq -e --arg run "$run" '(.workflow_run.id | tostring) == $run and .expired == false' \
                   <<<"$artifact" >/dev/null || return 1
-                selected+=("$id $run $attempt")
+                matches+=("$id $run $attempt")
               fi
             done
-            if (( ${#selected[@]} != 1 )); then
+            if (( ${#matches[@]} != 1 )); then
               echo "Select exactly one unexpired review artifact for $prefix." >&2
               return 1
             fi
-            printf '%s\n' "${selected[0]}"
+            printf '%s\n' "${matches[0]}"
           }
           download_receipt() {
             local id=$1
@@ -360,7 +377,8 @@ jobs:
                 ' .path == $path and (.event == $event or ($branch == "staging" and .event == "workflow_dispatch")) and
                   .head_branch == $branch and .head_sha == $sha and .conclusion == "success"' >/dev/null
             download_receipt "$artifact_id"
-          elif [[ "$TARGET" == prod && ( "$APPLY" == true || "$GITHUB_EVENT_NAME" == workflow_dispatch ) ]]; then
+          elif [[ ( "$PROTECTED_PROMOTIONS" == true && ( "$APPLY" == true || "$PREFLIGHT" == true ) ) ||
+                  ( "$TARGET" == prod && ( "$APPLY" == true || "$GITHUB_EVENT_NAME" == workflow_dispatch ) ) ]]; then
             if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
               pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" | jq -cer --arg sha "$GITHUB_SHA" \
                 '[.[] | select(.merge_commit_sha == $sha and .merged_at and .base.ref == "production" and .head.ref == "main")] | first')
@@ -369,10 +387,10 @@ jobs:
               PR_MERGED_AT=$(jq -er .merged_at <<<"$pr")
             fi
             reviews=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews")
-            selections=$(jq -r --arg head "$PR_HEAD" --arg merged "$PR_MERGED_AT" '
+            selections=$(jq -r --arg head "$PR_HEAD" --arg merged "$PR_MERGED_AT" --arg author "${PR_AUTHOR:-}" '
               add | map(select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")) |
               group_by(.user.id) | map(max_by(.id)) |
-              .[] | select(.state == "APPROVED" and .commit_id == $head and .submitted_at <= $merged) |
+              .[] | select(.state == "APPROVED" and .commit_id == $head and .submitted_at <= $merged and .user.login != $author) |
               . as $review | .body // "" | split("\n")[] |
               capture("^Terraform artifact: (?<id>[1-9][0-9]*)[[:space:]]*$") |
               [.id, $review.submitted_at] | @tsv
@@ -447,7 +465,7 @@ jobs:
           fi
           lock=(-lock-timeout=120s)
           expected=()
-          if [[ "$APPLY" == true && ( "$TARGET" == prod || -n "$REVIEWED_RUN" ) ]]; then
+          if [[ "$PREFLIGHT" == true || ( "$APPLY" == true && ( "$TARGET" == prod || "$PROTECTED_PROMOTIONS" == true || -n "$REVIEWED_RUN" ) ) ]]; then
             expected=(--expected "$RUNNER_TEMP/review/receipt.json")
           fi
           terraform plan -input=false -no-color "${lock[@]}" "${vars[@]}" \
@@ -460,7 +478,7 @@ jobs:
           fi
           {
             echo "### Terraform plan for $TARGET"
-            printf 'Candidate image: `%s`\n\n' "$(jq -er .image "$RUNNER_TEMP/image.json")"
+            printf 'Candidate image: %s\n\n' "$(jq -er .image "$RUNNER_TEMP/image.json")"
             echo '~~~text'
             cat "$RUNNER_TEMP/plan.txt"
             echo '~~~'
@@ -471,7 +489,7 @@ jobs:
             --out "$RUNNER_TEMP/receipt.json" "${expected[@]}"
       - uses: actions/upload-artifact@v4
         id: upload
-        if: env.APPLY == 'false'
+        if: env.APPLY == 'false' && !inputs.preflight
         with:
           name: ${{ steps.release.outputs.upload_name }}
           path: |
@@ -479,11 +497,11 @@ jobs:
             ${{ runner.temp }}/image.json
           if-no-files-found: error
       - name: Publish review artifact ID
-        if: env.APPLY == 'false'
+        if: env.APPLY == 'false' && !inputs.preflight
         env:
           ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
         run: |
-          printf '\nAfter this run succeeds, use this ID in the reviewed dispatch or production PR approval:\n\n`Terraform artifact: %s`\n' "$ARTIFACT_ID" >> "$GITHUB_STEP_SUMMARY"
+          printf '\nAfter this run succeeds, use this ID in the PR approval (or reviewed dispatch for legacy callers):\n\nTerraform artifact: %s\n' "$ARTIFACT_ID" >> "$GITHUB_STEP_SUMMARY"
       - name: Verify release is current
         if: env.APPLY == 'true'
         run: |
@@ -540,6 +558,16 @@ jobs:
         if: env.APPLY == 'true' && env.TARGET == 'staging' && steps.release.outputs.mode == 'release'
         run: echo 'The staging release and configured checks completed.'
 
+      - name: Record deployed staging commit
+        if: env.APPLY == 'true' && env.TARGET == 'staging' && steps.release.outputs.mode == 'release' && inputs.protected_promotions
+        run: git rev-parse HEAD > "$RUNNER_TEMP/staging-commit.txt"
+      - name: Publish staging release evidence
+        if: env.APPLY == 'true' && env.TARGET == 'staging' && steps.release.outputs.mode == 'release' && inputs.protected_promotions
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-release-${{ github.sha }}-${{ steps.release.outputs.key }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/staging-commit.txt
+          if-no-files-found: error
       - name: Record verified apply
         id: verified
         if: env.APPLY == 'true'

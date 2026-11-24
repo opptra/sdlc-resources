@@ -36,7 +36,7 @@ When a request includes something the platform does not yet generate, the suppor
 
 `main` is the default branch. A feature branch is cut from `main` and the pull request targets `main`. Merging to `main` does not deploy.
 
-A direct push to `staging` deploys staging. `staging` is not a protected branch, so a developer can push there without the `main` review. Do not merge `main` into `staging`. A pull request from `main` into `production` is the only promotion from `main`, and that merge deploys production. One human approves. Dobby reviews every pull request and does not count as that approval.
+Staging uses a reviewed candidate PR for apps with deployment IAM. Legacy staging callers deploy on push. A PR from `main` into `production` is the production promotion. See [promotion and approvals](infra-handoff.md#deployment-iam-in-the-feature-pr).
 
 `deploy-staging` and `deploy-production` also accept `workflow_dispatch`. A run from the Actions page deploys only the matching branch, and that new run resolves the shared workflows at `main` again. Re-running an old job keeps the shared workflow commit from the original run.
 

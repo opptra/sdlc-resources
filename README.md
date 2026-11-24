@@ -10,7 +10,7 @@ After bootstrap or adoption, app owners can take over Terraform and deployment c
 
 `main` is the default branch. A feature pull request targets `main`. Merging to `main` does not deploy.
 
-A direct push to `staging` deploys the shared staging project. `staging` has no pull request. `main` is not merged into `staging`.
+Apps with deployment IAM deploy a candidate through a reviewed PR into `staging`. Legacy callers deploy staging on push. [Promotion and approvals](docs/infra-handoff.md#deployment-iam-in-the-feature-pr)
 
 A pull request from `main` into `production` deploys `prod_project` from `service.yaml`.
 

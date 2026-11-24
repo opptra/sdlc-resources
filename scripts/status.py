@@ -846,8 +846,8 @@ MEANS = {
     5: "These are the rules the agent follows on the next feature or bug. After they are present, the agent keeps the product rules and uses the standard commit, test, and deploy path.",
     6: "These are the GitHub checks and deploy jobs. After they match this repo, a pull request runs the real tests and a staging push deploys only what was pushed.",
     7: "This is how you prove a change. After the test command exists, a bug starts with a failing test and a feature ends with that command passing.",
-    8: "This is how the app reaches the cloud. After Terraform is the deploy path, a direct push to staging updates staging, and only a pull request from main into production updates production.",
-    9: "These are the three branches. After they exist, developers push tries straight to staging, and main is promoted only into production. Organization rules protect main and production.",
+    8: "This is how the app reaches the cloud. Follow the active caller. Apps with deployment IAM use reviewed PRs for staging and production. Legacy callers deploy staging on push.",
+    9: "These are the three branches. Apps with deployment IAM protect staging and production with PR review and plan checks. Main promotes only into production.",
     10: "This keeps passwords out of git. After it is in place, the app reads secret ids from Secret Manager and logs never contain those values.",
     11: "This is where data lives. After it is declared, the app uses Postgres, Firestore, or BigQuery on purpose and does not invent a second database.",
     12: "This is who can open the app. After it is set, staff use Google sign-in, a webhook checks a shared secret, and jobs stay private.",
@@ -860,7 +860,7 @@ MEANS = {
 
 PILLAR_MEANS = {
     "5.1": "New behaviour starts with a test. After this rule is in the repo, the agent writes the test before the code.",
-    "5.2": "Work lands through a pull request into main. After this rule is in the repo, staging is a direct push and main promotes only to production.",
+    "5.2": "Work lands through a pull request into main. The active caller determines staging. Apps with deployment IAM use reviewed staging PRs. Main promotes only to production.",
     "5.3": "Every change names a Linear issue. After this rule is in the repo, the agent stops if Linear is not connected.",
     "5.4": "A feature writes an OpenSpec first. After this rule is in the repo, product code waits until that spec exists.",
     "5.5": "Cloud resources are Terraform on GCP. After this rule is in the repo, a laptop deploy script is no longer the way to ship.",

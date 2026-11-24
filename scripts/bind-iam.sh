@@ -81,13 +81,18 @@ jq -e --arg member "serviceAccount:$applier" --arg title "$title" --arg expressi
 # Verify the apply environment before giving any workflow cloud authority.
 gh api "repos/$repo/environments/$environment-iam-plan" >/dev/null
 apply_environment=$(gh api "repos/$repo/environments/$environment-iam-apply")
-if [[ "$environment" == staging ]]; then
-  jq -e 'any(.protection_rules[]?; .type == "required_reviewers" and .prevent_self_review == true and (.reviewers | length > 0))' <<<"$apply_environment" >/dev/null ||
-    { echo "Require a teammate reviewer for staging-iam-apply." >&2; exit 1; }
-fi
+rules=$(gh api "repos/$repo/rules/branches/$environment")
+jq -e '
+  any(.[]; .type == "pull_request" and
+    .parameters.required_approving_review_count >= 1 and .parameters.dismiss_stale_reviews_on_push == true) and
+  any(.[]; .type == "required_status_checks" and
+    any(.parameters.required_status_checks[]?; .context == "Terraform promotion review")) and
+  any(.[]; .type == "non_fast_forward") and any(.[]; .type == "deletion")
+' <<<"$rules" >/dev/null ||
+  { echo "Protect $environment with a ruleset requiring peer approval, stale approval dismissal, release checks, and branch deletion and force-push restrictions." >&2; exit 1; }
 printf '%s\n' "$apply_environment" |
   jq -e '.deployment_branch_policy.custom_branch_policies' >/dev/null ||
-  { echo "Configure required reviewers, prevent self-review, and select a branch for $environment-iam-apply." >&2; exit 1; }
+  { echo "Select the protected branch for $environment-iam-apply." >&2; exit 1; }
 gh api --paginate --slurp "repos/$repo/environments/$environment-iam-apply/deployment-branch-policies" |
   jq -e --arg branch "$environment" '
     [.[].branch_policies[]] | length == 1 and .[0].name == $branch and .[0].type == "branch"
