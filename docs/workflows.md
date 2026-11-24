@@ -27,7 +27,7 @@ If the sentence does not name a skill, use `opptra`. It only picks the route:
 
 A capability change and a product change are two pull requests. `change-app` goes first, in the same chat. The agent opens the `infra/<ticket>-<slug>` pull request and can immediately cut `feat/<ticket>-<slug>` stacked on top of that infra branch (`next_step: code-stacked-on-infra`) so product code and local tests continue without waiting for the infra merge (or pause at `wait-for-infra` if the developer prefers). A feature is `express` when it is one file (test and pull request, no OpenSpec), `standard` when it needs an OpenSpec, or `migration` when a local plan already decided the shape. After the plan is approved, `feature` and `bug` write `.sdlc/intent.yaml` so a new chat continues. That directory is gitignored.
 
-`main` is the default branch and does not deploy. A direct push to `staging` deploys staging. Developers push there without a pull request. `main` is not merged into `staging`. A pull request from `main` into `production` deploys production.
+`main` is the default branch and does not deploy. Apps with deployment IAM use a reviewed PR into `staging`. Legacy callers deploy staging on push. Production uses a PR from `main` into `production`. See [promotion and approvals](infra-handoff.md#deployment-iam-in-the-feature-pr).
 
 ## Prerequisites
 
@@ -78,7 +78,7 @@ flowchart TD
   G --> H[Dobby posts the review brief]
   H --> I[Developer reviews spec and code, approves, squash-merges]
   I --> J["Commit on main: feat: TICKET summary. main does not deploy"]
-  J --> K[Developer pushes the feature branch directly to staging]
+  J --> K[Developer submits the candidate through the app staging path]
   K --> L[GitHub builds the image, pushes it, applies Terraform in the staging project]
   L --> M[Developer opens the staging URL]
   M --> N[Developer opens a pull request from main into production]
@@ -87,7 +87,7 @@ flowchart TD
   P --> Q[Developer moves the Linear issue to Done]
 ```
 
-A change to `infra/`, workflows, or `service.yaml` is a `change-app` pull request. It is not mixed into the feature. The agent opens that pull request in the same chat and waits until the developer says it has merged. `express` skips the OpenSpec and still opens one pull request into `main`. After either pull request into `main`, the agent prints the ship card and does not push `staging` unless asked.
+Use `change-app` for infrastructure-only work. For app-owned repositories, include infrastructure and IAM that a feature needs in its feature PR. `express` skips the OpenSpec and still opens one pull request into `main`. After either pull request into `main`, the agent prints the ship card for the active caller.
 
 A deploy that mounts secrets creates the Secret Manager shells first. If a mounted secret has no version, the action stops and lists the ids. Add a version in Secret Manager and re-run the workflow. The value is not committed. Cloud Run mounts `latest` on that next run.
 
@@ -108,9 +108,9 @@ flowchart TD
   G --> H[GitHub runs CI and the plan. Dobby comments. Nothing deploys]
   H --> I[Developer approves and squash-merges]
   I --> J["Commit on main: fix: TICKET summary"]
-  J --> K[Developer pushes the fix branch directly to staging and checks the URL]
+  J --> K[Developer releases the fix through the app staging path and checks the URL]
   K --> L[Developer opens a pull request from main into production]
   L --> M[Production deploys. Developer moves the issue to Done]
 ```
 
-A production bug uses this same path. Staging is a direct push, not a merge from `main`. A rollback is a revert merged to `main`, then a pull request into `production`. The revert branch can also be pushed straight to `staging`. It is not a button that redeploys an older image.
+A production bug uses this same path. To test a revert, use the staging path for the active caller, then promote the revert from `main` to `production`.

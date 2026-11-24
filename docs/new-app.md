@@ -23,3 +23,5 @@ The agent scaffolds the app in five phases (`check` → `init-runtime` → `add-
    - The agent has already created the GitHub environments `staging` and `production`. A repository admin adds a required reviewer on `production` when the plan allows it. Then set the Actions variables the scripts print.
    - The developer runs `scripts/bind-staging.sh` when they can change IAM in `opptra-staging` and can read the pool in `opptra-sdlc-ci`. They run the two `gh variable set` commands that script prints. They do not need production access.
    - The developer sends `scripts/bind-production.sh` to someone who can change IAM in `prod_project`. That person runs it and runs the two production `gh variable set` commands it prints. They do not need access to `opptra-staging`. If they cannot set GitHub variables, they send those two commands back to a repository admin.
+
+For a new Cloud Run app using deployment IAM, complete the [identity and branch setup](bind.md#bind-the-deployment-iam-identities) before the first release. Open a candidate PR into `staging` for peer review. Its merge deploys staging. Promote through a separate `main` to `production` PR.

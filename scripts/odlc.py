@@ -12,7 +12,7 @@ Subcommands:
   init-runtime <service.yaml> [dest]          Phase 2: Scaffold runtime, openspec/, and entrypoints
   add-data <service.yaml> [dest]              Phase 3: Install data/storage/queue/secret packages & helpers
   add-tests <service.yaml> [dest]             Phase 4: Configure test runners and capability test fixtures
-  setup-promotion <service.yaml> [dest] --workflow-ref <sha>
+  setup-promotion <service.yaml> [dest] --workflow-ref <sha> [--with-iam]
   adoption-check --repo <owner/repository>
   sync [service.yaml] [dest]                  Alias for `sync-infra`
   sync-infra <service.yaml> [dest] [--ci-only] Phase 5: Generate Terraform, workflows, rules, and README
@@ -177,7 +177,11 @@ def run_next(rest: list[str]) -> int:
     elif intent.get("next_step") in {"test", "code", "code-stacked-on-infra", "ci"}:
         next_cmd = f"Continue {intent.get('route', 'feature')} on {intent.get('branch', branch)} and run `make ci`"
     elif branch not in {"main", "staging", "production", "uninitialized"}:
-        next_cmd = f"make ci && git push --force-with-lease origin {branch}:staging"
+        promotion = repo_dir / ".github" / "workflows" / "promotion.yml"
+        if promotion.is_file() and "protected_promotions: true" in promotion.read_text():
+            next_cmd = f"Run make ci and open a PR from {branch} into staging"
+        else:
+            next_cmd = f"make ci && git push --force-with-lease origin {branch}:staging"
     else:
         next_cmd = "Start a feature (`feat/<ticket>-<slug>`) or bug fix (`fix/<ticket>-<slug>`)"
 

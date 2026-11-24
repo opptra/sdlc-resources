@@ -16,12 +16,12 @@ All of this runs on a GitHub-hosted runner, in the app repository, by calling wo
 |---|---|---|
 | Lint and tests | Every pull request | Nothing |
 | `terraform plan` | Every pull request | Reads state and the live project. Writes a short summary comment. Changes nothing. |
-| `docker build` and push | Merge to `staging` or `production` | Pushes an image tagged with that commit's SHA to Artifact Registry in the target project |
+| `docker build` and push | Candidate plan for protected promotion | Publishes an immutable candidate image in the target project. The approved merge deploys the reviewed digest. |
 | `terraform plan` again, then `terraform apply` | Same merge, after the push | Creates, updates, or deletes resources so the project matches `infra/` |
 
-A pull request into `main` plans `opptra-staging` and does not apply. A push to `staging` applies that plan in the staging project. A pull request into `production` plans `prod_project`, and the merge applies it.
+For callers with deployment IAM, a PR into `main` validates Terraform. PRs into `staging` and `production` show environment-specific plans and an approved merge applies them. Legacy callers retain their existing triggers. See [promotion and approvals](infra-handoff.md#deployment-iam-in-the-feature-pr).
 
-On a laptop, `make ci` runs that same `docker build` before the first push to staging, once the deploy workflows exist. It also runs `terraform validate` with `-backend=false` when Terraform is installed. That check does not read state and does not apply. `terraform plan` still runs on the pull request.
+On a laptop, `make ci` runs that same `docker build` before the first staging release, once the deploy workflows exist. It also runs `terraform validate` with `-backend=false` when Terraform is installed. That check does not read state and does not apply. `terraform plan` still runs on the pull request.
 
 The build context is the component directory, and the Dockerfile there is `Dockerfile`. A component whose image must read other files in the repo sets `docker_context` and `dockerfile` in `service.yaml`. Both paths stay inside the repo, and the Dockerfile stays inside the context. The laptop build and the shared workflow use that pair. The workflow passes the directory to the shell as `BUILD_CONTEXT`. It does not export `DOCKER_CONTEXT`: the Docker CLI reserves that name, and a value of `.` makes `docker build` fail with `no builder "." found`.
 

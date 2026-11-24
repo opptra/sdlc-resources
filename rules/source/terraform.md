@@ -3,3 +3,11 @@ GCP resources are declared in infra and the shared module. Do not apply Terrafor
 `make ci` runs `terraform validate` with `-backend=false` when Terraform is installed and the deploy workflows were generated. That check does not read state and does not apply. Review the plan linked from the pull request checks. App-owned promotion shows the plan in the Actions run summary. That comment lists each add, change, replace, and destroy, and a destroy or a replace is at the top. A database, when one is added, uses lifecycle prevent_destroy.
 
 Keep the staging and production backend locations separate and preserve their keys during handoff. Adoption imports app-owned resources into the appropriate state and uses explicit references for shared resources. Rehearse the full staging release and resolve parity gaps before handoff. Review the expected imports and references in the first production plan before switching deploy paths. In promotion, merging a reviewed PR from main into production triggers apply.
+
+When the promotion caller uses deployment IAM, include needed Terraform grants
+in the feature PR. Put delegated project grants in `infra/iam/<environment>.json`.
+Keep workload bindings in the Terraform root that owns the resource policy.
+Staging and production write only after a reviewed promotion PR merges.
+Before IAM additions, check the reviewed app plan and the approved IAM artifact.
+Retired grants are removed only after every component completes post_apply. If the requested scope exceeds the delegation, identify the owner
+who can extend it.

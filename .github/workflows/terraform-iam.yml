@@ -1,0 +1,316 @@
+name: Terraform deployment grants
+
+on:
+  workflow_call:
+    inputs:
+      phase:
+        description: additions preserves existing grants, cleanup removes retired grants after app verification
+        type: string
+        default: additions
+      apply:
+        description: Apply the matching plan during an authorized release
+        type: boolean
+        default: false
+      fingerprint:
+        description: Expected plan fingerprint from the preview in this release
+        type: string
+        default: ""
+    outputs:
+      fingerprint:
+        value: ${{ jobs.iam.outputs.fingerprint }}
+      pending:
+        value: ${{ jobs.iam.outputs.pending }}
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: read
+  id-token: write
+
+jobs:
+  iam:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (github.base_ref == 'staging' || (github.base_ref == 'production' && github.head_ref == 'main')) &&
+      (github.event.action != 'closed' || github.event.pull_request.merged) &&
+      (!inputs.apply || (github.event.action == 'closed' && github.event.pull_request.merged &&
+       github.ref == format('refs/heads/{0}', github.base_ref)))
+    runs-on: ubuntu-latest
+    environment: ${{ format('{0}-iam-{1}', (github.base_ref == 'production' || github.ref == 'refs/heads/production') && 'production' || 'staging', inputs.apply && 'apply' || 'plan') }}
+    outputs:
+      fingerprint: ${{ steps.terraform.outputs.fingerprint }}
+      pending: ${{ steps.terraform.outputs.pending }}
+    concurrency:
+      group: ${{ inputs.apply && format('deployment-iam-{0}', github.ref) || format('deployment-iam-preview-{0}', github.run_id) }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TARGET: ${{ (github.base_ref == 'production' || github.ref == 'refs/heads/production') && 'production' || 'staging' }}
+      PHASE: ${{ inputs.phase }}
+      APPLY: ${{ inputs.apply }}
+      EXPECTED: ${{ inputs.fingerprint }}
+      PROJECT: ${{ vars.IAM_PROJECT }}
+      BUCKET: ${{ vars.IAM_STATE_BUCKET }}
+      ROLES: ${{ vars.IAM_GRANT_ROLES }}
+      MEMBERS: ${{ vars.IAM_GRANT_MEMBERS }}
+      TF_IN_AUTOMATION: "true"
+    steps:
+      - name: Resolve trusted source
+        id: source
+        env:
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          MERGED: ${{ github.event.pull_request.merged }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_EVENT_NAME" == pull_request && "$GITHUB_BASE_REF" == "$TARGET" ]]
+          [[ "$TARGET" == staging || ( "$TARGET" == production && "$GITHUB_HEAD_REF" == main ) ]]
+          jq -e --arg repo "$GITHUB_REPOSITORY" '.pull_request.head.repo.full_name == $repo' "$GITHUB_EVENT_PATH" >/dev/null
+          action=$(jq -er .action "$GITHUB_EVENT_PATH")
+          sha=$GITHUB_SHA
+          if [[ "$action" == closed ]]; then
+            [[ "$MERGED" == true && "$GITHUB_REF" == "refs/heads/$TARGET" && "$MERGE_SHA" == "$GITHUB_SHA" ]]
+            sha=$MERGE_SHA
+          fi
+          [[ "$sha" =~ ^[a-f0-9]{40}$ ]]
+          if [[ "$APPLY" == true ]]; then
+            [[ "$action" == closed && "$EXPECTED" =~ ^[a-f0-9]{64}$ ]] ||
+              { echo 'IAM writes require an approved promotion merge.' >&2; exit 1; }
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "### IAM source: $sha ($TARGET)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Resolve approved IAM plan
+        if: inputs.apply
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_MERGED_AT: ${{ github.event.pull_request.merged_at }}
+        run: |
+          set -euo pipefail
+          reviews=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews")
+          selections=$(jq -r --arg head "$PR_HEAD" --arg author "$PR_AUTHOR" --arg merged "$PR_MERGED_AT" '
+            add | map(select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")) |
+            group_by(.user.id) | map(max_by(.id)) |
+            .[] | select(.state == "APPROVED" and .commit_id == $head and .user.login != $author and .submitted_at <= $merged) |
+            . as $review | .body // "" | split("\n")[] |
+            capture("^IAM artifact: (?<id>[1-9][0-9]*)[[:space:]]*$") | [.id, $review.submitted_at] | @tsv
+          ' <<<"$reviews")
+          id=$(cut -f1 <<<"$selections" | sort -u)
+          [[ "$id" =~ ^[1-9][0-9]*$ ]] || { echo 'Approve exactly one IAM artifact on the promotion PR.' >&2; exit 1; }
+          artifact=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id")
+          name=$(jq -er 'select(.expired == false) | .name' <<<"$artifact")
+          [[ "$name" =~ ^iam-review-$PR_NUMBER-([0-9]+)-([0-9]+)$ ]]
+          run_id=${BASH_REMATCH[1]} attempt=${BASH_REMATCH[2]}
+          jq -e --arg run "$run_id" '(.workflow_run.id | tostring) == $run' <<<"$artifact" >/dev/null
+          workflow_ref=${GITHUB_WORKFLOW_REF%@*}
+          workflow_path=${workflow_ref#"$GITHUB_REPOSITORY/"}
+          ready=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/attempts/$attempt" |
+            jq -er --arg path "$workflow_path" --arg head "$PR_HEAD" '
+              select(.path == $path and .event == "pull_request" and .head_sha == $head and
+                     .conclusion == "success") | .updated_at')
+          awk -v ready="$ready" '$2 >= ready { approved = 1 } END { exit !approved }' <<<"$selections" ||
+            { echo 'Approve the IAM artifact after its run attempt succeeds.' >&2; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$RUNNER_TEMP/iam-review.zip"
+          unzip -p "$RUNNER_TEMP/iam-review.zip" iam-review.json > "$RUNNER_TEMP/iam-review.json"
+      - name: Read declarations and prepare Terraform
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$PROJECT" =~ ^[a-z][a-z0-9-]+$ && "$BUCKET" =~ ^[a-z0-9][-a-z0-9_.]+$ ]]
+          mkdir "$RUNNER_TEMP/iam"
+          cd "$RUNNER_TEMP/iam"
+          gh api "repos/$GITHUB_REPOSITORY/contents/infra/iam/$TARGET.json?ref=$SOURCE_SHA" \
+            -H 'Accept: application/vnd.github.raw+json' > grants.json
+          jq -e --argjson roles "$ROLES" --argjson members "$MEMBERS" '
+            type == "object" and all(to_entries[];
+              (.key | test("^[a-z][a-z0-9_-]*$")) and
+              (.value | type == "object") and
+              (.value | keys | . == ["member","role"] or . == ["adopt","member","role"]) and
+              (.value.adopt | . == null or type == "boolean") and
+              (.value.role as $role | $roles | index($role) != null) and
+              (.value.member as $member | $members | index($member) != null))
+            and (length == (map([.role,.member]) | unique | length))
+          ' grants.json >/dev/null
+          jq -n --arg project "$PROJECT" --slurpfile grants grants.json \
+            '{project:$project,grants:$grants[0]}' > terraform.tfvars.json
+          cat > main.tf <<'HCL'
+          terraform {
+            required_version = ">= 1.10.5, < 2.0"
+            backend "gcs" {}
+            required_providers {
+              google = {
+                source  = "hashicorp/google"
+                version = "= 6.50.0"
+              }
+            }
+          }
+
+          variable "project" { type = string }
+          variable "grants" {
+            type = map(object({
+              member = string
+              role   = string
+              adopt  = optional(bool, false)
+            }))
+          }
+
+          resource "google_project_iam_member" "grant" {
+            for_each = var.grants
+            project  = var.project
+            member   = each.value.member
+            role     = each.value.role
+          }
+
+          import {
+            for_each = { for key, grant in var.grants : key => grant if grant.adopt }
+            to       = google_project_iam_member.grant[each.key]
+            id       = "${var.project} ${each.value.role} ${each.value.member}"
+          }
+          HCL
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.5"
+          terraform_wrapper: false
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
+      - name: Plan or apply reviewed grants
+        id: terraform
+        working-directory: ${{ runner.temp }}/iam
+        run: |
+          set -euo pipefail
+          printf '%s' "$(jq -cS . terraform.tfvars.json)" | sha256sum | cut -d ' ' -f1 > declarations.hash
+          terraform init -input=false -backend-config="bucket=$BUCKET" -backend-config=prefix=deployment-iam
+          [[ "$PHASE" == additions || "$PHASE" == cleanup ]]
+          # Refresh the current state before computing the temporary union.
+          if ! terraform state pull > current-state.json 2>state-error.txt; then
+            # Terraform emits this message for an initialized backend with no state.
+            if grep -q 'No state file was found' state-error.txt && [[ ! -s current-state.json ]]; then
+              printf '{"resources":[]}\n' > current-state.json
+            else
+              cat state-error.txt >&2
+              echo 'Cannot read IAM state. Stop before changing grants.' >&2
+              exit 1
+            fi
+          fi
+          jq --slurpfile desired terraform.tfvars.json '
+            [ .resources[]? | select(.type == "google_project_iam_member" and .name == "grant") |
+              .instances[] | {key:.index_key,value:{member:.attributes.member,role:.attributes.role}} ] |
+            from_entries as $old |
+            $desired[0].grants as $new |
+            if any($new | to_entries[];
+                . as $entry | any($old | to_entries[];
+                  .key != $entry.key and .value.member == $entry.value.member and .value.role == $entry.value.role))
+            then error("Grant key rename requires an explicit state move before release")
+            elif any($old | to_entries[];
+                . as $entry | $new[$entry.key] != null and
+                ($new[$entry.key].member != $entry.value.member or $new[$entry.key].role != $entry.value.role))
+            then error("Use a new key for a changed grant so old access survives deployment")
+            else $desired[0] + {grants:($old + $new)} end
+          ' current-state.json > additions.tfvars.tmp
+          jq --slurpfile desired terraform.tfvars.json '
+            .grants | with_entries(select($desired[0].grants[.key] == null)) |
+            map_values({member,role})
+          ' additions.tfvars.tmp > retirements.json
+          if [[ "$PHASE" == additions ]]; then
+            {
+              echo '### Existing grants retained until verified cleanup'
+              jq -r --slurpfile desired terraform.tfvars.json '
+                .grants | to_entries[] | select($desired[0].grants[.key] == null) |
+                "- " + .key + ": " + .value.member + " / " + .value.role
+              ' additions.tfvars.tmp
+            } >> "$GITHUB_STEP_SUMMARY"
+            mv additions.tfvars.tmp terraform.tfvars.json
+          fi
+          lock=(-lock=false)
+          if [[ "$APPLY" == true ]]; then lock=(-lock-timeout=120s); fi
+          result=0
+          terraform plan -input=false "${lock[@]}" -detailed-exitcode -out=grants.plan >/dev/null || result=$?
+          [[ "$result" == 0 || "$result" == 2 ]]
+          terraform show -json grants.plan > plan.json
+          jq -e --arg project "$PROJECT" --argjson roles "$ROLES" --argjson members "$MEMBERS" '
+            .complete != false and .errored != true and
+            all(.resource_changes[]?;
+              .mode == "managed" and .type == "google_project_iam_member" and
+              all((.change.before, .change.after) | select(. != null);
+                .project == $project and (.condition | length == 0) and
+                (.role as $role | $roles | index($role) != null) and
+                (.member as $member | $members | index($member) != null)))
+          ' plan.json >/dev/null
+          if [[ "$PHASE" == additions ]]; then
+            jq -e 'all(.resource_changes[]?; (.change.actions | index("delete")) == null)' plan.json >/dev/null ||
+              { echo 'An additions plan cannot remove access.' >&2; exit 1; }
+          fi
+          fingerprint=$(
+            jq -cS --arg declarations "$(cat declarations.hash)" --arg phase "$PHASE" \
+              --arg target "$TARGET/$PROJECT/$BUCKET" --slurpfile retirements retirements.json '
+              {declarations:$declarations,phase:$phase,target:$target,terraform_version,
+               resource_changes,resource_drift,variables,retirements:$retirements[0]}
+            ' plan.json | sha256sum | cut -d ' ' -f1
+          )
+          if [[ "$APPLY" == true && "$PHASE" == cleanup ]]; then
+            jq -e --slurpfile approved "$RUNNER_TEMP/iam-review.json" '
+              all(.resource_changes[]?;
+                .change.actions == ["no-op"] or
+                (.change.actions == ["delete"] and (.index | type == "string") and
+                 (.index as $key | .change.before as $before |
+                  $approved[0].retirements[$key] == ($before | {member,role}))))
+            ' plan.json >/dev/null ||
+              { echo 'IAM cleanup contains a change outside the approved removals.' >&2; exit 1; }
+          fi
+          if [[ "$APPLY" == false && "$PHASE" == additions ]]; then
+            jq -n --arg fingerprint "$fingerprint" --arg declarations "$(cat declarations.hash)" \
+              --slurpfile retirements retirements.json \
+              '{fingerprint:$fingerprint,declarations:$declarations,retirements:$retirements[0]}' > "$RUNNER_TEMP/iam/iam-review.json"
+          fi
+          pending=false
+          if [[ "$result" == 2 ]] || jq -e 'any(.resource_changes[]?; .change.importing != null)' plan.json >/dev/null; then
+            pending=true
+          fi
+          if [[ "$APPLY" == true && "$PHASE" == additions ]]; then
+            jq -e --arg expected "$fingerprint" --arg pending "$pending" \
+              --arg declarations "$(cat declarations.hash)" --slurpfile retirements retirements.json '
+              .fingerprint == $expected or
+              ($pending == "false" and .declarations == $declarations and .retirements == $retirements[0])
+            ' "$RUNNER_TEMP/iam-review.json" >/dev/null ||
+              { echo 'IAM plan differs from the approved PR. Open a fresh promotion PR.' >&2; exit 1; }
+          fi
+          printf 'fingerprint=%s\npending=%s\n' "$fingerprint" "$pending" >> "$GITHUB_OUTPUT"
+          {
+            printf '\nPlan fingerprint: %s\n\n' "$fingerprint"
+            printf '%s\n' 'Actions | Previous grant | Proposed grant | Import' '--- | --- | --- | ---'
+            jq -r '
+              def display_grant: if . == null then "—" else "\(.member) / \(.role)" end;
+              .resource_changes[]? | .change |
+              select(.actions != ["no-op"] or .importing != null) |
+              [(.actions | join(", ")),(.before | display_grant),(.after | display_grant),
+                (.importing != null | tostring)] |
+              join(" | ")' plan.json
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$APPLY" == true ]]; then
+            [[ "$fingerprint" == "$EXPECTED" ]] || { echo 'IAM plan changed. Review a fresh release plan.' >&2; exit 1; }
+            [[ "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$TARGET" --jq .object.sha)" == "$GITHUB_SHA" ]] ||
+              { echo 'The protected branch advanced. Start a new release.' >&2; exit 1; }
+            if [[ "$pending" == true ]]; then
+              terraform apply -input=false -lock-timeout=120s grants.plan
+            fi
+          fi
+      - name: Publish IAM plan
+        if: >-
+          !inputs.apply && inputs.phase == 'additions' && github.event.action != 'closed'
+        id: review
+        uses: actions/upload-artifact@v4
+        with:
+          name: iam-review-${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/iam/iam-review.json
+          if-no-files-found: error
+      - name: Show IAM review reference
+        if: steps.review.outcome == 'success'
+        env:
+          ARTIFACT_ID: ${{ steps.review.outputs.artifact-id }}
+        run: |
+          printf 'Include this line in the promotion PR approval after the run succeeds.\n\nIAM artifact: %s\n' "$ARTIFACT_ID" >> "$GITHUB_STEP_SUMMARY"

@@ -92,13 +92,22 @@ def validate_staging(report: dict, manifest: dict, repo: str) -> None:
         return json.loads(result.stdout)
 
     run = github("")
-    expected = {
-        "head_branch": "staging", "head_sha": sha,
-        "conclusion": "success", "path": ".github/workflows/promotion.yml",
-    }
-    if run.get("event") not in ("push", "workflow_dispatch") or any(
-        run.get(key) != value for key, value in expected.items()
-    ):
+    expected_path = ".github/workflows/promotion.yml"
+    if run.get("conclusion") != "success" or run.get("path") != expected_path:
+        raise ValueError("Use a successful staging apply run of promotion.yml for the recorded commit.")
+    event = run.get("event")
+    if event == "pull_request":
+        # A PR run's head can identify the feature branch. Successful release
+        # jobs publish evidence naming the staging merge commit and attempt.
+        artifacts = github("/artifacts?per_page=100").get("artifacts", [])
+        artifact_name = rf"staging-release-{sha}-[a-f0-9]{{16}}-{run['run_attempt']}"
+        applied_components = {
+            artifact["name"] for artifact in artifacts
+            if re.fullmatch(artifact_name, artifact["name"])
+        }
+    elif event in ("push", "workflow_dispatch") and run.get("head_branch") == "staging" and run.get("head_sha") == sha:
+        applied_components = None
+    else:
         raise ValueError("Use a successful staging apply run of promotion.yml for the recorded commit.")
     jobs = github(f"/attempts/{run['run_attempt']}/jobs?per_page=100")
     applies = [
@@ -107,10 +116,12 @@ def validate_staging(report: dict, manifest: dict, repo: str) -> None:
     ]
     deploy_jobs = [
         job for job in jobs["jobs"]
-        if any(step["name"] == "Apply reviewed plan" for step in job.get("steps", []))
+        if any(step["name"] == "Apply reviewed plan" and step["conclusion"] == "success" for step in job.get("steps", []))
     ]
-    caller = Path(expected["path"]).read_text()
+    caller = Path(expected_path).read_text()
     expected_jobs = len(re.findall(r"^  terraform-\d+:$", caller, re.MULTILINE))
+    if applied_components is not None and len(applied_components) != expected_jobs:
+        raise ValueError("The staging run does not prove that the recorded merge commit deployed.")
     if not expected_jobs or len(deploy_jobs) != expected_jobs or len(applies) != expected_jobs or any(
         step["conclusion"] != "success" for step in applies
     ):
